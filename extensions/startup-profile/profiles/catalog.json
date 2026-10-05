@@ -1,0 +1,31 @@
+[
+  {
+    "id": "research",
+    "label": "Research",
+    "description": "情報を調べ、出典付きの資料・表にまとめる",
+    "instructionsFile": "research.md"
+  },
+  {
+    "id": "specification",
+    "label": "Specification",
+    "description": "要件・制約・受け入れ条件を整理し、仕様にまとめる",
+    "instructionsFile": "specification.md"
+  },
+  {
+    "id": "developer",
+    "label": "Development",
+    "description": "コード・設計・検証を中心に支援",
+    "instructionsFile": "developer.md"
+  },
+  {
+    "id": "chore",
+    "label": "Chore（雑務）",
+    "description": "整理・定型作業などの雑務を支援",
+    "instructionsFile": "chore.md"
+  },
+  {
+    "id": "standard",
+    "label": "Other",
+    "description": "用途別の指示を追加しない"
+  }
+]

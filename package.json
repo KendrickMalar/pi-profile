@@ -1,0 +1,42 @@
+{
+  "name": "pi-profile",
+  "version": "0.1.0",
+  "description": "Session-scoped startup instruction profiles for Pi",
+  "type": "module",
+  "license": "MIT",
+  "author": "Papillon6814",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Papillon6814/pi-profile.git"
+  },
+  "keywords": [
+    "pi-package"
+  ],
+  "files": [
+    "extensions/startup-profile/",
+    "docs/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=26.10.0"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/startup-profile/index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/*.test.ts tests/startup-profile/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "test:cli": "python3 scripts/test-startup-profile-cli.py"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.0.2",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  }
+}
