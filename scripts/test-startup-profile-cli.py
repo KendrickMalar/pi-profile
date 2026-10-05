@@ -116,7 +116,7 @@ class Acceptance(unittest.TestCase):
         (self.cwd/"AGENTS.md").write_text("PROJECT_FIXTURE_RULE: preserve project instructions.")
         binpath=self.home/"bin";binpath.mkdir()
         # Existing executables are reused; never download tools or load real config.
-        for name in ("fd","rg"):
+        for name in ("node","fd","rg"):
             found=shutil.which(name)
             if found: (binpath/name).symlink_to(found)
         self.env={"HOME":str(self.home),"PATH":str(binpath)+":/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
@@ -300,6 +300,32 @@ class Acceptance(unittest.TestCase):
         mark=len(c.data);c.send("/plan\r");c.wait(lambda:"Plan mode" in c.text(mark) or "plan mode" in c.text(mark))
         body=self.prompt(c,"normal fixture");self.assert_persona(body,"開発")
         self.assertIn("write",[t["function"]["name"] for t in body.get("tools",[])])
+        # Exercise omp itself: a valid no-op extension must fail this case.
+        mark=len(c.data); c.send("/vibe on\r")
+        c.wait(lambda:"vibe mode ON" in c.text(mark))
+        def assert_vibe(body):
+            self.assert_persona(body,"開発")
+            self.assertIn("Vibe mode is ON",json.dumps(body,ensure_ascii=False))
+            names=[t["function"]["name"] for t in body.get("tools",[])]
+            self.assertIn("read",names)
+            for name in ("write","edit","bash"):
+                self.assertNotIn(name,names)
+        assert_vibe(self.prompt(c,"vibe fixture"))
+        mark=len(c.data); c.send("/plan\r")
+        c.wait(lambda:"Plan mode" in c.text(mark) or "plan mode" in c.text(mark))
+        body=self.prompt(c,"vibe plus plan fixture"); assert_vibe(body)
+        self.assertIn("[PLAN MODE ACTIVE]",json.dumps(body,ensure_ascii=False))
+        mark=len(c.data); c.send("/reload\r")
+        c.wait(lambda:"Reloaded" in c.text(mark) or "reloaded" in c.text(mark))
+        self.assertNotIn("会話のprofileを選択",c.text(mark))
+        # omp resets its mode on reload; explicitly re-enable before checking it.
+        mark=len(c.data); c.send("/vibe on\r")
+        c.wait(lambda:"vibe mode ON" in c.text(mark))
+        body=self.prompt(c,"vibe plus plan after reload"); assert_vibe(body)
+        self.assertIn("[PLAN MODE ACTIVE]",json.dumps(body,ensure_ascii=False))
+        mark=len(c.data); c.send("/plan\r")
+        c.wait(lambda:"Plan mode" in c.text(mark) or "plan mode" in c.text(mark))
+        assert_vibe(self.prompt(c,"vibe after plan off"))
 
     def preprofile_tree(self, c):
         mark=len(c.data); c.send("/fixture-preprofile\r")
