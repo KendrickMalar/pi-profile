@@ -1,5 +1,6 @@
-import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { existsSync, statSync } from "node:fs";
+import { homedir } from 'node:os';
+import { resolveProfileRoot } from './profile-root.ts';
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { loadProfiles, STANDARD_PROFILE } from "./catalog.ts";
 import { STATE_ENTRY_TYPE, snapshotProfile, readSnapshot, decideSessionProfile } from "./state.ts";
@@ -9,7 +10,7 @@ import type { ProfileDefinition } from './catalog.ts';
 import { commonSkillsFromCommands, loadProfileResources, resolveAgentSkillPaths } from './profile-resources.ts';
 import { registerProfileAgents } from './subagent-registration.ts';
 
-export default function startupProfile(pi: ExtensionAPI, profilesRoot = fileURLToPath(new URL('./profiles/', import.meta.url))): void {
+export default function startupProfile(pi: ExtensionAPI, profilesRoot?: string): void {
  let active:ProfileSnapshot=snapshotProfile(STANDARD_PROFILE);
  let hasStoredProfile=false;
  let generation=0;
@@ -28,7 +29,16 @@ export default function startupProfile(pi: ExtensionAPI, profilesRoot = fileURLT
  });
  pi.on("session_start",async(event,ctx)=>{
   release();
-  const {profiles,warnings}=loadProfiles(profilesRoot);
+  const resolved=profilesRoot!==undefined ? {directory:profilesRoot} : resolveProfileRoot({home:homedir(),override:process.env.PI_PROFILE_DIR});
+  let profiles:ProfileDefinition[]=[{...STANDARD_PROFILE}];
+  const warnings:string[]=[];
+  if(resolved.warning)warnings.push(resolved.warning);
+  if(resolved.directory){
+   try{
+    if(!statSync(resolved.directory).isDirectory())throw new Error('保存先はフォルダではありません');
+    const loaded=loadProfiles(resolved.directory);profiles=loaded.profiles;warnings.push(...loaded.warnings);
+   }catch(error){warnings.push('個人Profileを読み込めません: '+resolved.directory+'。初期配置を確認してください。 '+String(error));}
+  }
   for(const warning of warnings)ctx.ui.notify(warning,'warning');
   controller?.abort();
   const current=++generation; const sessionId=ctx.sessionManager.getSessionId();

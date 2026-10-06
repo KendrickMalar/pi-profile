@@ -7,7 +7,7 @@ export function containedPath(root:string, path:string):string {
  if(rel==='..'||rel.startsWith('..'+sep)||isAbsolute(rel))throw new Error('path escapes profile root');
  return target;
 }
-export function scanFolderProfiles(root:string):{profiles:FolderProfile[];blockedIds:string[];warnings:string[]} {
+export function scanFolderProfiles(root:string):{profiles:FolderProfile[];blockedIds:string[];warnings:string[];unavailable?:boolean} {
  const profiles:FolderProfile[]=[], warnings:string[]=[], blocked=new Set<string>(), seen=new Set<string>(), duplicates=new Set<string>();
  try {
   for(const entry of readdirSync(root,{withFileTypes:true}).sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:0)) {
@@ -31,6 +31,6 @@ export function scanFolderProfiles(root:string):{profiles:FolderProfile[];blocke
     profiles.push({id:id!,label:m.label,description:m.description,instructions,directory,order:m.order??100,enabled:true});
    }catch(error){warnings.push('profile folder '+entry.name+': '+String(error));}
   }
- }catch(error){warnings.push('profile folders: '+String(error));}
+ }catch(error){return {profiles:[],blockedIds:[],warnings:['profile folders: '+String(error)],unavailable:true};}
  return {profiles:profiles.filter(p=>!duplicates.has(p.id)).sort((a,b)=>a.order-b.order||(a.id<b.id?-1:a.id>b.id?1:0)),blockedIds:[...blocked],warnings};
 }

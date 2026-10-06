@@ -42,7 +42,19 @@ There is no mid-conversation switch or profile CLI flag.
 
 ## Customize
 
-Manage one folder per profile under `extensions/startup-profile/profiles/`:
+Manage one folder per personal profile under **`~/.pi/agent/profiles/`**. The package's `extensions/startup-profile/profiles/` contains samples only; it is not an active configuration source.
+
+Create the personal directory once and copy the five sample folders (`research`, `specification`, `development`, `chore`, `standard`) plus the empty `catalog.json` from the package. Keep their IDs unchanged. Inspect any existing destination first: do not overwrite or merge existing user definitions. Pi does not create or copy profiles automatically. Missing or empty personal roots use Other; deleting a personal profile does not bring back its sample.
+
+To use another root for an invocation:
+
+```sh
+PI_PROFILE_DIR="$HOME/my-profiles" pi
+# A literal ~/ prefix is also accepted:
+PI_PROFILE_DIR='~/my-profiles' pi
+```
+
+Only absolute paths and `~/` paths are supported. Unset or empty `PI_PROFILE_DIR` uses the default; invalid relative/control-character values use Other with a warning and never fall back to another root. Account-specific `PI_CODING_AGENT_DIR` does not change this default: profiles are shared by accounts in the same HOME unless explicitly overridden. Restart/reload to reread definitions. Package updates never overwrite personal files.
 
 ```text
 research/
