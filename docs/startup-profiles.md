@@ -23,7 +23,20 @@ print / JSON / RPCの新規会話はOtherで、選択待ちをしません。保
 
 ## Profileの追加
 
-`extensions/startup-profile/profiles/` にProfileごとのフォルダを作ります。
+普段は **`~/.pi/agent/profiles/`** にProfileごとのフォルダを作り、編集します。リポジトリ内の `extensions/startup-profile/profiles/` はサンプルです。個人設定と混ぜて読み込まず、サンプルを編集しても普段のProfileには反映されません。
+
+初期配置は一度だけ行います。保存先が未作成であることを確認し、5つのサンプルフォルダ（research/specification/development/chore/standard）と空のcatalog.jsonをコピーしてください。既存ファイル・フォルダ・symlinkがある場合は上書きせず先に確認します。旧平置きMarkdownやsecretary.md、拡張コード、node_modulesはコピー不要です。
+
+起動時の自動コピーや自動作成はしません。保存先がない・空ならOtherだけになります。個人Profileを消してもサンプルから復活しません。以後の編集はホーム側で行い、追加リソースは再開/reloadで読み直します。
+
+保存先を変える場合:
+
+```sh
+PI_PROFILE_DIR="$HOME/my-profiles" pi
+PI_PROFILE_DIR='~/my-profiles' pi
+```
+
+未設定・空文字は既定の `~/.pi/agent/profiles/`、非空は絶対パスまたは~/だけを受け付けます。不正な相対パス・制御文字・空白だけの値は警告してOtherとなり、別の保存先へフォールバックしません。PI_CODING_AGENT_DIRによる認証アカウント切替では既定Profile保存先を変えません。pi-kuno/pi-muu/pi-rbxも同じHOMEなら共通利用です。コードやサンプルの更新で個人ファイルを自動上書きしません。
 
 ```text
 research/

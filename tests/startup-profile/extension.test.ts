@@ -1,13 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import extension from "../../extensions/startup-profile/index.ts";
+import { fileURLToPath } from 'node:url';
 function harness(choice:string|null|undefined="[developer] Development — コード・設計・検証を中心に支援",restore:unknown[]=[]) {
  const handlers:Record<string,Function>={}; const entries:any[]=[...restore]; const notices:any[]=[]; const statuses:any[]=[]; let selects=0;let id="one";
  const pi:any={on:(n:string,h:Function)=>{handlers[n]=h;return()=>{};},appendEntry:(customType:string,data:unknown)=>entries.push({type:"custom",customType,data})};
  for(const name of ["setModel","setThinkingLevel","setActiveTools","registerCommand","registerShortcut","registerFlag"]) pi[name]=()=>assert.fail("out-of-scope API "+name);
  let selectImpl=async (_title:string,opts:string[],_options:any)=>{selects++;assert.equal(entries.filter(e=>e.customType==="startup-profile-state").length,0);assert.equal(opts.length,5);return choice ?? undefined;};
  const ctx:any={mode:"tui",hasUI:true,sessionManager:{getEntries:()=>entries,getSessionFile:()=>undefined,getSessionId:()=>id},ui:{select:(...args:any[])=>selectImpl(...args as [string,string[],any]),notify:(...args:any[])=>notices.push(args),setStatus:(...args:any[])=>statuses.push(args)}};
- extension(pi);return {handlers,entries,notices,statuses,ctx,get selects(){return selects;},setSelect:(f:any)=>{selectImpl=f;},setId:(next:string)=>{id=next;}};
+ extension(pi,fileURLToPath(new URL('../../extensions/startup-profile/profiles/',import.meta.url)));return {handlers,entries,notices,statuses,ctx,get selects(){return selects;},setSelect:(f:any)=>{selectImpl=f;},setId:(next:string)=>{id=next;}};
 }
 const snapshot={version:1,id:"developer",label:"開発",instructions:"RESTORED"};
 test("selects and saves snapshot before first agent run",async()=>{

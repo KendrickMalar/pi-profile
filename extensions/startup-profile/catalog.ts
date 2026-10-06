@@ -44,7 +44,9 @@ export function loadLegacyProfiles(directory: string, includeFallback = true): {
 }
 
 export function loadProfiles(directory:string):{profiles:ProfileDefinition[];warnings:string[]} {
- const folders=scanFolderProfiles(directory), legacy=loadLegacyProfiles(directory,false);
+ const folders=scanFolderProfiles(directory);
+ if(folders.unavailable)return {profiles:[{...STANDARD_PROFILE}],warnings:folders.warnings};
+ const legacy=loadLegacyProfiles(directory,false);
  const warnings=[...folders.warnings,...legacy.warnings];
  const profiles:ProfileDefinition[]=[...folders.profiles];
  for(const p of legacy.profiles) {

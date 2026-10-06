@@ -85,6 +85,9 @@ class Acceptance(unittest.TestCase):
         self.extension = self.package / "extensions/startup-profile"
         shutil.copytree(ROOT/"extensions/startup-profile", self.extension)
         shutil.copyfile(ROOT/"package.json", self.package/"package.json")
+        self.profiles = self.home / '.pi/agent/profiles'
+        self.profiles.parent.mkdir(parents=True)
+        shutil.copytree(self.extension/'profiles', self.profiles)
         self.load_as_package = False
         self.extra_extensions = []
         self.resource_mode = False
@@ -224,7 +227,7 @@ class Acceptance(unittest.TestCase):
         c.wait(lambda:len(self.requests)>0 and "FIXTURE_OK" in c.text());self.assert_persona(self.requests[-1],"開発")
     def test_resume_immutable_without_files(self):
         c=self.child();self.choose(c);self.prompt(c);path=self.session();c.close()
-        shutil.rmtree(self.extension/"profiles")
+        shutil.rmtree(self.profiles)
         r=self.run_mode("--session",str(path),"--print","resume fixture")
         self.assertIn("FIXTURE_OK",r.stdout);self.assert_persona(self.requests[-1],"開発")
     def test_continue_json_restores(self):
@@ -379,14 +382,14 @@ class Acceptance(unittest.TestCase):
 
     def legacy_only(self):
         # Only disposable copied fixture folders, never the checkout.
-        for folder in (self.extension/'profiles').iterdir():
+        for folder in self.profiles.iterdir():
             if folder.is_dir(): shutil.rmtree(folder)
 
     def test_duplicate_display_selects_second_id(self):
         self.legacy_only()
-        (self.extension/"profiles/a.md").write_text("A_ONLY_PERSONA")
-        (self.extension/"profiles/b.md").write_text("B_ONLY_PERSONA")
-        (self.extension/"profiles/catalog.json").write_text(json.dumps([
+        (self.profiles/"a.md").write_text("A_ONLY_PERSONA")
+        (self.profiles/"b.md").write_text("B_ONLY_PERSONA")
+        (self.profiles/"catalog.json").write_text(json.dumps([
             {"id":"standard","label":"標準","description":"標準"},
             {"id":"alpha","label":"同じ","description":"説明","instructionsFile":"a.md"},
             {"id":"beta","label":"同じ","description":"説明","instructionsFile":"b.md"}]))
@@ -420,7 +423,7 @@ class Acceptance(unittest.TestCase):
 
     def test_invalid_catalog_falls_back(self):
         self.legacy_only()
-        (self.extension/"profiles/catalog.json").write_text("{not valid json")
+        (self.profiles/"catalog.json").write_text("{not valid json")
         c=self.child(); c.wait(lambda:"会話のprofileを選択" in c.text())
         c.send("\r"); c.wait(lambda:"profile:Other" in c.text())
         self.assert_persona(self.prompt(c),"標準")
@@ -445,7 +448,7 @@ class Acceptance(unittest.TestCase):
     def resource_fixture(self):
         self.resource_mode = True
         for name, marker in [('research','RESEARCH_SKILL_BODY'),('development','DEVELOPMENT_SKILL_BODY')]:
-            folder=self.extension/'profiles'/name
+            folder=self.profiles/name
             skill=folder/'skills/profile-check';skill.mkdir(parents=True)
             (skill/'SKILL.md').write_text('---\nname: profile-check\ndescription: '+marker+'\n---\n'+marker)
             agents=folder/'agents';agents.mkdir()
@@ -468,7 +471,7 @@ class Acceptance(unittest.TestCase):
         system=json.dumps([m for m in self.requests[-1]['messages'] if m['role']=='system'])
         self.assertIn('RESEARCH_SKILL_BODY',system)
         self.assertNotIn('DEVELOPMENT_SKILL_BODY',system)
-        skill=self.extension/'profiles/research/skills/profile-check/SKILL.md'
+        skill=self.profiles/'research/skills/profile-check/SKILL.md'
         skill.write_text(skill.read_text().replace('RESEARCH_SKILL_BODY','UPDATED_SKILL_BODY'))
         c=self.child('--session',str(path));c.wait(lambda:'profile:Research' in c.text())
         mark=len(c.data);c.send('/reload\r');c.wait(lambda:'Reloaded' in c.text(mark) or 'reloaded' in c.text(mark))
@@ -477,13 +480,13 @@ class Acceptance(unittest.TestCase):
         self.assertIn('UPDATED_SKILL_BODY',json.dumps(self.prompt(c,'clone resource')))
         # Remove discoverable fixture entries by moving them out of their scan paths.
         skill.rename(self.home/'removed-skill.md')
-        agent=self.extension/'profiles/research/agents/helper.md';agent.rename(self.home/'removed-agent.md')
+        agent=self.profiles/'research/agents/helper.md';agent.rename(self.home/'removed-agent.md')
         mark=len(c.data);c.send('/reload\r');c.wait(lambda:'Reloaded' in c.text(mark) or 'reloaded' in c.text(mark))
         body=self.prompt(c,'removed resource')
         system=json.dumps([m for m in body['messages'] if m['role']=='system'])
         self.assertNotIn('UPDATED_SKILL_BODY',system)
         self.assertNotIn('profile.research.helper',system)
-        metadata=self.extension/'profiles/research/profile.json'; data=json.loads(metadata.read_text());data['enabled']=False;metadata.write_text(json.dumps(data))
+        metadata=self.profiles/'research/profile.json'; data=json.loads(metadata.read_text());data['enabled']=False;metadata.write_text(json.dumps(data))
         mark=len(c.data);c.send('/reload\r');c.wait(lambda:'Reloaded' in c.text(mark) or 'reloaded' in c.text(mark))
         body=self.prompt(c,'disabled resource')
         system=json.dumps([m for m in body['messages'] if m['role']=='system'])
@@ -541,13 +544,93 @@ class Acceptance(unittest.TestCase):
         body=json.dumps(self.prompt(c,'catalog after new'))
         self.assertIn('profile.developer.helper',body)
         self.assertNotIn('profile.research.helper',body)
-        agent=self.extension/'profiles/development/agents/helper.md';agent.rename(self.home/'removed-helper.md')
-        local_skill=self.extension/'profiles/development/skills/profile-check/SKILL.md';local_skill.rename(self.home/'removed-development-skill.md')
+        agent=self.profiles/'development/agents/helper.md';agent.rename(self.home/'removed-helper.md')
+        local_skill=self.profiles/'development/skills/profile-check/SKILL.md';local_skill.rename(self.home/'removed-development-skill.md')
         mark=len(c.data);c.send('/reload\r');c.wait(lambda:'Reloaded' in c.text(mark) or 'reloaded' in c.text(mark))
         body=self.prompt(c,'after resource removal')
         system=json.dumps([m for m in body['messages'] if m['role']=='system'])
         self.assertNotIn('profile.developer.helper',system)
         self.assertNotIn('DEVELOPMENT_SKILL_BODY',system)
+
+    def test_profile_home_separation(self):
+        self.resource_fixture()
+        sample=self.extension/'profiles/research/instructions.md'
+        sample.write_text('# 調査profile\nSAMPLE_ONLY_RULE')
+        sample_skill=self.extension/'profiles/research/skills/sample-only';sample_skill.mkdir(parents=True)
+        (sample_skill/'SKILL.md').write_text('---\nname: sample-only\ndescription: SAMPLE_ONLY_SKILL\n---\nSAMPLE_ONLY_SKILL')
+        sample_agent=self.extension/'profiles/research/agents';sample_agent.mkdir()
+        (sample_agent/'sample-only.md').write_text('---\nname: sample-only\ndescription: SAMPLE_ONLY_AGENT\n---\nSAMPLE_ONLY_AGENT')
+        personal=self.profiles/'research/instructions.md'
+        personal.write_text('# 調査profile\nPERSONAL_HOME_RULE')
+        extra=self.extension/'profiles/sample-only';extra.mkdir()
+        (extra/'profile.json').write_text(json.dumps({'id':'sample-only','label':'SampleOnly','description':'SAMPLE_ONLY_PROFILE','order':1}))
+        (extra/'instructions.md').write_text('SAMPLE_ONLY_RULE')
+        c=self.child();self.choose(c,0)
+        body=self.prompt(c,'/skill:profile-check')
+        self.assertIn('PERSONAL_HOME_RULE',json.dumps(body))
+        self.assertNotIn('SAMPLE_ONLY_RULE',json.dumps(body))
+        self.assertNotIn('SAMPLE_ONLY_PROFILE',json.dumps(body))
+        self.assertNotIn('SAMPLE_ONLY_SKILL',json.dumps(body))
+        self.assertNotIn('SAMPLE_ONLY_AGENT',json.dumps(body))
+        self.assertNotIn('profile.research.sample-only',json.dumps(body))
+        self.assertIn('RESEARCH_SKILL_BODY',json.dumps(body))
+        path=self.session()
+        personal.write_text('# 調査profile\nNEW_PERSONAL_RULE')
+        skill=self.profiles/'research/skills/profile-check/SKILL.md';skill.write_text(skill.read_text().replace('RESEARCH_SKILL_BODY','UPDATED_HOME_SKILL'))
+        sample.write_text('# 調査profile\nCHANGED_SAMPLE_RULE')
+        mark=len(c.data);c.send('/reload\r');c.wait(lambda:'Reloaded' in c.text(mark) or 'reloaded' in c.text(mark))
+        body=self.prompt(c,'/skill:profile-check')
+        self.assertIn('UPDATED_HOME_SKILL',json.dumps(body))
+        system=json.dumps([m for m in body['messages'] if m['role']=='system'])
+        self.assertIn('PERSONAL_HOME_RULE',system)
+        self.assertNotIn('NEW_PERSONAL_RULE',system)
+        self.assertNotIn('CHANGED_SAMPLE_RULE',system)
+        c.close()
+        self.run_mode('--session',str(path),'--print','resume separated fixture')
+        self.assertIn('PERSONAL_HOME_RULE',json.dumps(self.requests[-1]))
+        self.run_mode('--fork',str(path),'--print','fork separated fixture')
+        self.assertIn('UPDATED_HOME_SKILL',json.dumps(self.requests[-1]))
+        metadata=self.profiles/'research/profile.json';data=json.loads(metadata.read_text());data['enabled']=False;metadata.write_text(json.dumps(data))
+        c=self.child();c.wait(lambda:'会話のprofileを選択' in c.text())
+        self.assertNotIn('[research] Research',c.text())
+        c.send('\x1b');c.wait(lambda:'profile:Other' in c.text())
+        system=json.dumps([m for m in self.prompt(c,'removed personal')['messages'] if m['role']=='system'])
+        self.assertNotIn('UPDATED_HOME_SKILL',system)
+        self.assertNotIn('CHANGED_SAMPLE_RULE',system)
+
+    def test_profile_root_override(self):
+        explicit=self.home/'custom';shutil.copytree(self.profiles,explicit)
+        (self.profiles/'research/instructions.md').write_text('# 調査profile\nDEFAULT_HOME_RULE')
+        (explicit/'research/instructions.md').write_text('# 調査profile\nEXPLICIT_ROOT_RULE')
+        for override in [str(explicit),'~/custom','~//custom','~///custom']:
+            self.env['PI_PROFILE_DIR']=override
+            c=self.child();c.wait(lambda:'会話のprofileを選択' in c.text())
+            before=len(self.requests);c.send('\r');c.wait(lambda:'profile:Research' in c.text())
+            self.assertEqual(len(self.requests),before)
+            body=self.prompt(c,'explicit root')
+            self.assertIn('EXPLICIT_ROOT_RULE',json.dumps(body))
+            self.assertNotIn('DEFAULT_HOME_RULE',json.dumps(body));c.close()
+        self.env['PI_PROFILE_DIR']='relative/profiles'
+        c=self.child();c.wait(lambda:'会話のprofileを選択' in c.text())
+        c.send('\r');c.wait(lambda:'profile:Other' in c.text())
+        system=json.dumps([m for m in self.prompt(c,'invalid root')['messages'] if m['role']=='system'])
+        self.assertNotIn('EXPLICIT_ROOT_RULE',system);self.assertNotIn('DEFAULT_HOME_RULE',system)
+        self.assertFalse((self.cwd/'relative').exists())
+
+    def test_profile_unreadable_root(self):
+        if hasattr(os,'geteuid') and os.geteuid()==0:self.skipTest('requires nonprivileged POSIX process')
+        (self.profiles/'legacy.md').write_text('LEGACY_ROOT_RULE')
+        (self.profiles/'catalog.json').write_text(json.dumps([{'id':'research','label':'Legacy','description':'','instructionsFile':'legacy.md'}]))
+        os.chmod(self.profiles,0o111)
+        try:
+            self.assertIn('Legacy',(self.profiles/'catalog.json').read_text())
+            c=self.child();c.wait(lambda:'会話のprofileを選択' in c.text())
+            c.send('\r');c.wait(lambda:'profile:Other' in c.text())
+            body=self.prompt(c,'unreadable root fixture')
+            system=json.dumps([m for m in body['messages'] if m['role']=='system'])
+            self.assertNotIn('LEGACY_ROOT_RULE',system)
+        finally:
+            os.chmod(self.profiles,0o700)
 
 if __name__ == "__main__":
     parser=argparse.ArgumentParser()
