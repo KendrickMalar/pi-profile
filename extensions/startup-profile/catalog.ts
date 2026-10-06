@@ -1,13 +1,14 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { scanFolderProfiles } from './folder-profile.ts';
 
 export interface ProfileDefinition {
- id: string; label: string; description: string; instructions: string;
+ id: string; label: string; description: string; instructions: string; directory?: string;
 }
 export const STANDARD_PROFILE: ProfileDefinition = Object.freeze({
  id: "standard", label: "Other", description: "用途別の指示を追加しない", instructions: "",
 });
-export function loadProfiles(directory: string): { profiles: ProfileDefinition[]; warnings: string[] } {
+export function loadLegacyProfiles(directory: string, includeFallback = true): { profiles: ProfileDefinition[]; warnings: string[] } {
  const warnings: string[] = [];
  const profiles: ProfileDefinition[] = [];
  try {
@@ -37,7 +38,19 @@ export function loadProfiles(directory: string): { profiles: ProfileDefinition[]
     profiles.push({id:item.id,label:item.label,description:item.description,instructions});
    } catch (error) { warnings.push("profile "+item.id+": "+String(error)); }
   }
- } catch (error) { return {profiles:[{...STANDARD_PROFILE}], warnings:["profile catalog: "+String(error)]}; }
- if (!profiles.some(p=>p.id==="standard")) profiles.push({...STANDARD_PROFILE});
+ } catch (error) { return {profiles:includeFallback ? [{...STANDARD_PROFILE}] : [], warnings:["profile catalog: "+String(error)]}; }
+ if (includeFallback && !profiles.some(p=>p.id==="standard")) profiles.push({...STANDARD_PROFILE});
+ return {profiles,warnings};
+}
+
+export function loadProfiles(directory:string):{profiles:ProfileDefinition[];warnings:string[]} {
+ const folders=scanFolderProfiles(directory), legacy=loadLegacyProfiles(directory,false);
+ const warnings=[...folders.warnings,...legacy.warnings];
+ const profiles:ProfileDefinition[]=[...folders.profiles];
+ for(const p of legacy.profiles) {
+  if(folders.blockedIds.includes(p.id)){warnings.push('legacy profile '+p.id+' overridden or disabled by folder');continue;}
+  profiles.push(p);
+ }
+ if(!profiles.some(p=>p.id==='standard'))profiles.push({...STANDARD_PROFILE});
  return {profiles,warnings};
 }

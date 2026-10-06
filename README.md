@@ -10,11 +10,11 @@ Choose a purpose when starting a new interactive conversation or using `/new`:
 4. **Chore** — organization, routine tasks, and drafts.
 5. **Other** — no additional instructions (also the Escape fallback).
 
-The included instructions and selector text are Japanese. Edit the catalog and Markdown files to customize them.
+The included instructions and selector text are Japanese. Each profile has its own folder, optional skills, and optional namespaced subagents.
 
 ## Install
 
-Requires **Pi 1.0.2** (tested) and **Node 26.10.0 or newer**. Other Pi and Node versions have not been validated.
+Requires **Pi 1.0.2 or newer** (tested on 1.0.2 and 1.0.4) and **Node 26.10.0 or newer**. Other Pi and Node versions have not been validated.
 
 ```sh
 pi install git:github.com/Papillon6814/pi-profile
@@ -28,7 +28,7 @@ pi install /path/to/pi-profile
 
 Review the source before installation: Pi extensions execute code. Do not enable this package alongside the older `my-pi/extensions/startup-profile/index.ts`; exclude the old entry first to avoid duplicate selectors.
 
-This is **not an account switcher**. It does not change authentication, models, thinking levels, skills, tools, MCP, or permissions.
+This is **not an account switcher**. It preserves parent authentication, models, thinking levels, tools, MCP, permissions, and common skills/agents. A selected profile can add skills and `pi-subagents` agents for this conversation.
 
 ## Conversation behavior
 
@@ -42,13 +42,44 @@ There is no mid-conversation switch or profile CLI flag.
 
 ## Customize
 
-Edit `extensions/startup-profile/profiles/catalog.json` and place instruction Markdown in the same directory:
+Manage one folder per profile under `extensions/startup-profile/profiles/`:
 
-```json
-{"id":"writing","label":"Writing","description":"Draft and edit text","instructionsFile":"writing.md"}
+```text
+research/
+  profile.json
+  instructions.md
+  skills/source-check/SKILL.md
+  agents/investigator.md
 ```
 
-Catalog order is display order. IDs must be unique lowercase alphanumeric/hyphen identifiers. The fallback ID `standard` has no instruction file. Absolute paths, parent traversal, and symlinks escaping the catalog directory are rejected.
+```json
+{"id":"research","label":"Research","description":"Research sources","order":10,"enabled":true}
+```
+
+`instructions.md` is required except for Other (`id: standard`, no instructions). Optional `skills/` and `agents/` add resources to the common setup. Set `enabled: false` to remove a profile from new selection. Profiles sort by `order` (default 100), then ID. Keep existing IDs when renaming folders; Development uses `developer`.
+
+Skills use Agent Skills `SKILL.md`. Normally discovered common skills win same-name collisions. Skills contributed by other extensions follow Pi's extension discovery order (first discovered wins); child-selected skills always use the parent's final winner. Child-selected skill names must match their directory (or standalone Markdown basename), or the agent is rejected with a diagnostic.
+
+Agent Markdown uses YAML frontmatter:
+
+```yaml
+---
+name: investigator
+description: Check research evidence
+tools: read, bash
+skills: source-check
+---
+Check sources and separate facts from assumptions.
+```
+
+Research registers this as **`profile.research.investigator`**, not `investigator`. Keep the `profile.` prefix reserved: do not create common agents or aliases with the same complete names. Complete-name collisions with common definitions are not automatically recovered. Runtime agents require a compatible installed `pi-subagents` (tested with 0.76.1); its absence does not prevent profiles or skills from loading.
+
+Supported agent fields: `name`, `description`, `tools`, `skills`, `model`, `thinking`, `systemPromptMode`, `inheritProjectContext`, `inheritGlobalContext`, `inheritSkills`. Unknown fields are rejected. Defaults: append prompt, retain project/global instructions, do not inherit the entire skills catalog. Explicit `skills` select common or profile skills. Tool names do not automatically load extension providers. No automatic child launch or nested-agent registration is provided.
+Path-like `tools` entries (including `/` or a `.ts`/`.js` suffix) are rejected: they would otherwise load arbitrary extension code through pi-subagents.
+
+Profile instructions remain saved in the conversation. Additional resources are read from current files on resume/reload; missing or disabled profiles retain saved instructions without their additional resources. Changes to referenced scripts/files are not a fully immutable snapshot or sandbox.
+
+Legacy `catalog.json` definitions still work. Folder definitions take precedence over the same legacy ID, including disabled definitions. Other is always available as a safe fallback. External symlink/path escapes are rejected.
 
 Instructions apply only to new conversations. **Never put credentials or secrets in a profile:** the literal text is saved in the conversation and may be exposed in exports or shares. Profiles should not weaken common safety rules or project instructions.
 
@@ -66,7 +97,7 @@ python3 scripts/test-startup-profile-cli.py --pi "$(command -v pi)"
 
 CLI tests use disposable HOME/configuration, synthetic credentials, a loopback-only model, and PTYs. They do not use real accounts or an external model API. Evidence is written to ignored `.test-evidence/cli/`. The PTY harness supports macOS/Linux, not Windows.
 
-The default run skips **one external compatibility case**, explicitly reporting it as skipped. Run it separately with existing extension paths:
+The default run skips four optional integration cases: Plan/omp compatibility plus three real-subagent cases (base and both common-extension load orders). Pass the existing extension paths to run them; nothing is downloaded.
 
 ```sh
 python3 scripts/test-startup-profile-cli.py --pi "$(command -v pi)" \
@@ -79,6 +110,13 @@ Both paths are required; no extension is downloaded. This case loads external co
 
 ```sh
 python3 scripts/test-startup-profile-cli.py --case startup_select --without-extension
+```
+
+Real subagent integration (foreground/background children against the loopback model):
+
+```sh
+python3 scripts/test-startup-profile-cli.py --case profile_subagent_resources \
+  --subagents-extension /path/to/pi-subagents/index.js
 ```
 
 See [the detailed Japanese guide](docs/startup-profiles.md).

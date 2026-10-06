@@ -86,6 +86,9 @@ class Acceptance(unittest.TestCase):
         shutil.copytree(ROOT/"extensions/startup-profile", self.extension)
         shutil.copyfile(ROOT/"package.json", self.package/"package.json")
         self.load_as_package = False
+        self.extra_extensions = []
+        self.resource_mode = False
+        self.pre_extensions = []
         self.requests = []; self.children = []
         requests = self.requests
         owner = self
@@ -100,6 +103,19 @@ class Acceptance(unittest.TestCase):
                     self.wfile.write(b'{"error":{"message":"fixture failure"}}'); return
                 self.send_response(200); self.send_header("Content-Type", "text/event-stream")
                 self.end_headers()
+                messages=body.get('messages',[])
+                users=[(i,m) for i,m in enumerate(messages) if m.get('role')=='user']
+                probe=users[-1] if users else None
+                content=probe[1].get('content','') if probe else ''
+                command=''.join(p.get('text','') for p in content if isinstance(p,dict)) if isinstance(content,list) else str(content)
+                trailing=messages[probe[0]+1:] if probe else []
+                if command.startswith('RUN_AGENT:') and not trailing:
+                    _,agent,mode=command.split(':')
+                    call={'index':0,'id':'fixture-call','type':'function','function':{'name':'subagent','arguments':json.dumps({'agent':agent,'task':'CHILD_TASK','async':mode=='background','artifacts':False,'timeoutMs':20000,'acceptance':{'level':'none','reason':'loopback fixture'}})}}
+                    chunk={'id':'fixture','object':'chat.completion.chunk','created':1,'model':'fixture','choices':[{'index':0,'delta':{'role':'assistant','tool_calls':[call]},'finish_reason':None}]}
+                    self.wfile.write(('data: '+json.dumps(chunk)+'\n\n').encode())
+                    chunk['choices']=[{'index':0,'delta':{},'finish_reason':'tool_calls'}]
+                    self.wfile.write(('data: '+json.dumps(chunk)+'\n\ndata: [DONE]\n\n').encode());self.wfile.flush();return
                 for delta, finish in [({"role":"assistant","content":"FIXTURE_OK"},None), ({}, "stop")]:
                     chunk={"id":"fixture","object":"chat.completion.chunk","created":1,"model":"fixture",
                            "choices":[{"index":0,"delta":delta,"finish_reason":finish}]}
@@ -147,8 +163,12 @@ class Acceptance(unittest.TestCase):
     def args(self,*extra):
         args=[OPTIONS.pi,"--offline","--no-extensions","--no-skills","--no-prompt-templates",
               "--model","profile-fixture/fixture"]
+        for extension in self.pre_extensions:
+            args += ['--extension',str(extension)]
         if not OPTIONS.without_extension:
             args += ["--extension",str(self.package if self.load_as_package else self.extension/"index.ts")]
+        for extension in self.extra_extensions:
+            args += ['--extension', str(extension)]
         return args+list(extra)
     def child(self,*extra):
         c=Child(self.args(*extra),self.env,self.cwd);self.children.append(c);return c
@@ -357,7 +377,13 @@ class Acceptance(unittest.TestCase):
         self.assertTrue(saved,"fork must inherit the immutable snapshot")
         self.assertTrue(all(e["id"]=="developer" for e in saved))
 
+    def legacy_only(self):
+        # Only disposable copied fixture folders, never the checkout.
+        for folder in (self.extension/'profiles').iterdir():
+            if folder.is_dir(): shutil.rmtree(folder)
+
     def test_duplicate_display_selects_second_id(self):
+        self.legacy_only()
         (self.extension/"profiles/a.md").write_text("A_ONLY_PERSONA")
         (self.extension/"profiles/b.md").write_text("B_ONLY_PERSONA")
         (self.extension/"profiles/catalog.json").write_text(json.dumps([
@@ -393,6 +419,7 @@ class Acceptance(unittest.TestCase):
         self.assertEqual(len(snapshots),1,"the package must load exactly one profile extension")
 
     def test_invalid_catalog_falls_back(self):
+        self.legacy_only()
         (self.extension/"profiles/catalog.json").write_text("{not valid json")
         c=self.child(); c.wait(lambda:"会話のprofileを選択" in c.text())
         c.send("\r"); c.wait(lambda:"profile:Other" in c.text())
@@ -415,16 +442,126 @@ class Acceptance(unittest.TestCase):
         self.assertEqual(self.requests,[])
         self.assertFalse(list((self.agent/"sessions").rglob("*.jsonl")))
 
+    def resource_fixture(self):
+        self.resource_mode = True
+        for name, marker in [('research','RESEARCH_SKILL_BODY'),('development','DEVELOPMENT_SKILL_BODY')]:
+            folder=self.extension/'profiles'/name
+            skill=folder/'skills/profile-check';skill.mkdir(parents=True)
+            (skill/'SKILL.md').write_text('---\nname: profile-check\ndescription: '+marker+'\n---\n'+marker)
+            agents=folder/'agents';agents.mkdir()
+            (agents/'helper.md').write_text('---\nname: helper\ndescription: helper\ntools: []\nskills: profile-check\n---\nCHILD_PROFILE_RULE')
+
+    def test_profile_resource_lifecycle(self):
+        self.resource_fixture()
+        c=self.child();self.choose(c,0)
+        body=self.prompt(c,'/skill:profile-check')
+        self.assertIn('RESEARCH_SKILL_BODY',json.dumps(body))
+        self.assertIn('<skill',json.dumps(body))
+        path=self.session()
+        mark=len(c.data);c.send('/new\r');c.wait(lambda:'会話のprofileを選択' in c.text(mark))
+        c.send('\x1b[B\x1b[B\r');c.wait(lambda:'profile:Development' in c.text(mark))
+        body=self.prompt(c,'/skill:profile-check')
+        self.assertIn('DEVELOPMENT_SKILL_BODY',json.dumps(body))
+        self.assertNotIn('RESEARCH_SKILL_BODY',json.dumps(body))
+        c.close()
+        self.run_mode('--session',str(path),'--print','resume resource')
+        system=json.dumps([m for m in self.requests[-1]['messages'] if m['role']=='system'])
+        self.assertIn('RESEARCH_SKILL_BODY',system)
+        self.assertNotIn('DEVELOPMENT_SKILL_BODY',system)
+        skill=self.extension/'profiles/research/skills/profile-check/SKILL.md'
+        skill.write_text(skill.read_text().replace('RESEARCH_SKILL_BODY','UPDATED_SKILL_BODY'))
+        c=self.child('--session',str(path));c.wait(lambda:'profile:Research' in c.text())
+        mark=len(c.data);c.send('/reload\r');c.wait(lambda:'Reloaded' in c.text(mark) or 'reloaded' in c.text(mark))
+        self.assertIn('UPDATED_SKILL_BODY',json.dumps(self.prompt(c,'/skill:profile-check')))
+        mark=len(c.data);c.send('/clone\r');c.wait(lambda:'Cloned to new session' in c.text(mark))
+        self.assertIn('UPDATED_SKILL_BODY',json.dumps(self.prompt(c,'clone resource')))
+        # Remove discoverable fixture entries by moving them out of their scan paths.
+        skill.rename(self.home/'removed-skill.md')
+        agent=self.extension/'profiles/research/agents/helper.md';agent.rename(self.home/'removed-agent.md')
+        mark=len(c.data);c.send('/reload\r');c.wait(lambda:'Reloaded' in c.text(mark) or 'reloaded' in c.text(mark))
+        body=self.prompt(c,'removed resource')
+        system=json.dumps([m for m in body['messages'] if m['role']=='system'])
+        self.assertNotIn('UPDATED_SKILL_BODY',system)
+        self.assertNotIn('profile.research.helper',system)
+        metadata=self.extension/'profiles/research/profile.json'; data=json.loads(metadata.read_text());data['enabled']=False;metadata.write_text(json.dumps(data))
+        mark=len(c.data);c.send('/reload\r');c.wait(lambda:'Reloaded' in c.text(mark) or 'reloaded' in c.text(mark))
+        body=self.prompt(c,'disabled resource')
+        system=json.dumps([m for m in body['messages'] if m['role']=='system'])
+        self.assertNotIn('UPDATED_SKILL_BODY',system)
+        self.assert_persona(body,'調査')
+
+    def test_profile_subagent_resources(self):
+        self.subagent_resources()
+
+    def test_profile_extension_skill_before(self):
+        self.subagent_resources('before')
+
+    def test_profile_extension_skill_after(self):
+        self.subagent_resources('after')
+
+    def subagent_resources(self, extension_order=None):
+        if not OPTIONS.subagents_extension:
+            self.skipTest('pass --subagents-extension for real child integration')
+        self.resource_fixture()
+        self.extra_extensions.append(Path(OPTIONS.subagents_extension))
+        config=self.agent/'extensions/subagent';config.mkdir(parents=True)
+        (config/'config.json').write_text(json.dumps({'toolActivation':'eager','intercomBridge':{'mode':'off'},'waitTool':{'enabled':False}}))
+        settings=json.loads((self.agent/'settings.json').read_text())
+        settings['subagents']={'defaultModel':'profile-fixture/fixture','defaultProvider':'profile-fixture'}
+        (self.agent/'settings.json').write_text(json.dumps(settings));self.unchanged['settings.json']=(self.agent/'settings.json').read_bytes()
+        common=self.agent/'agents';common.mkdir()
+        (common/'reviewer.md').write_text('---\nname: reviewer\ndescription: common reviewer\ntools:\n---\nCOMMON_REVIEWER_RULE')
+        shared=self.home/'shared/profile-check/SKILL.md';shared.parent.mkdir(parents=True)
+        shared.write_text('---\nname: profile-check\ndescription: COMMON_SKILL_BODY\n---\nCOMMON_SKILL_BODY')
+        # Explicit skill path is enabled even under --no-skills.
+        if extension_order:
+            helper=self.home/'common-skills.ts'
+            helper.write_text('export default function(pi){pi.on("resources_discover",()=>({skillPaths:['+json.dumps(str(shared))+']}));}')
+            (self.pre_extensions if extension_order=='before' else self.extra_extensions).append(helper)
+        c=self.child(*([] if extension_order else ['--skill',str(shared)]));self.choose(c,0)
+        parent=self.prompt(c,'catalog probe')
+        self.assertIn('profile.research.helper',json.dumps(parent))
+        system=json.dumps([m for m in parent['messages'] if m['role']=='system'])
+        winner='COMMON_SKILL_BODY' if 'COMMON_SKILL_BODY' in system else 'RESEARCH_SKILL_BODY'
+        if extension_order!='after':self.assertEqual(winner,'COMMON_SKILL_BODY')
+        for name in ['reviewer','profile.research.helper']:
+            for mode in ['foreground','background']:
+                before=len(self.requests)
+                self.prompt(c,'RUN_AGENT:'+name+':'+mode)
+                c.wait(lambda:any(any(m.get('role')=='user' and 'CHILD_TASK' in str(m.get('content','')) for m in r.get('messages',[])) for r in self.requests[before:]),timeout=30)
+                request=next(r for r in self.requests[before:] if any(m.get('role')=='user' and 'CHILD_TASK' in str(m.get('content','')) for m in r.get('messages',[])))
+                text=json.dumps(request)
+                self.assertIn('COMMON_REVIEWER_RULE' if name=='reviewer' else 'CHILD_PROFILE_RULE',text)
+                if name!='reviewer':
+                    self.assertIn(winner,text)
+                    self.assertNotIn('RESEARCH_SKILL_BODY' if winner=='COMMON_SKILL_BODY' else 'COMMON_SKILL_BODY',text)
+                self.assertNotIn('DEVELOPMENT_SKILL_BODY',text)
+        mark=len(c.data);c.send('/new\r');c.wait(lambda:'会話のprofileを選択' in c.text(mark))
+        c.send('\x1b[B\x1b[B\r');c.wait(lambda:'profile:Development' in c.text(mark))
+        body=json.dumps(self.prompt(c,'catalog after new'))
+        self.assertIn('profile.developer.helper',body)
+        self.assertNotIn('profile.research.helper',body)
+        agent=self.extension/'profiles/development/agents/helper.md';agent.rename(self.home/'removed-helper.md')
+        local_skill=self.extension/'profiles/development/skills/profile-check/SKILL.md';local_skill.rename(self.home/'removed-development-skill.md')
+        mark=len(c.data);c.send('/reload\r');c.wait(lambda:'Reloaded' in c.text(mark) or 'reloaded' in c.text(mark))
+        body=self.prompt(c,'after resource removal')
+        system=json.dumps([m for m in body['messages'] if m['role']=='system'])
+        self.assertNotIn('profile.developer.helper',system)
+        self.assertNotIn('DEVELOPMENT_SKILL_BODY',system)
+
 if __name__ == "__main__":
     parser=argparse.ArgumentParser()
     parser.add_argument("--pi",default=shutil.which("pi"))
     parser.add_argument("--plan-extension")
     parser.add_argument("--omp-extension")
+    parser.add_argument('--subagents-extension',help='installed pi-subagents index.js for explicit integration tests')
     parser.add_argument("--compatibility-only",action="store_true")
     parser.add_argument("--case")
     parser.add_argument("--without-extension",action="store_true",help="negative control: expected to fail")
     OPTIONS=parser.parse_args()
     if not OPTIONS.pi: parser.error("pi CLI not found")
+    if OPTIONS.subagents_extension and not Path(OPTIONS.subagents_extension).is_file():
+        parser.error('subagents extension path does not exist')
     requested = OPTIONS.compatibility_only or OPTIONS.case == "real_plan_and_omp_modes" or OPTIONS.plan_extension or OPTIONS.omp_extension
     if requested and not (OPTIONS.plan_extension and OPTIONS.omp_extension):
         parser.error("compatibility requires both --plan-extension and --omp-extension")

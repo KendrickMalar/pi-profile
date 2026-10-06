@@ -1,0 +1,7 @@
+{
+  "id": "specification",
+  "label": "Specification",
+  "description": "要件・制約・受け入れ条件を整理し、仕様にまとめる",
+  "order": 20,
+  "enabled": true
+}

@@ -1,0 +1,7 @@
+{
+  "id": "research",
+  "label": "Research",
+  "description": "情報を調べ、出典付きの資料・表にまとめる",
+  "order": 10,
+  "enabled": true
+}

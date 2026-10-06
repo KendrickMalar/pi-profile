@@ -5,18 +5,31 @@ import { loadProfiles, STANDARD_PROFILE } from "./catalog.ts";
 import { STATE_ENTRY_TYPE, snapshotProfile, readSnapshot, decideSessionProfile } from "./state.ts";
 import type { ProfileSnapshot } from "./state.ts";
 import { applyProfilePrompt } from "./prompt.ts";
+import type { ProfileDefinition } from './catalog.ts';
+import { commonSkillsFromCommands, loadProfileResources, resolveAgentSkillPaths } from './profile-resources.ts';
+import { registerProfileAgents } from './subagent-registration.ts';
 
-export default function startupProfile(pi: ExtensionAPI): void {
+export default function startupProfile(pi: ExtensionAPI, profilesRoot = fileURLToPath(new URL('./profiles/', import.meta.url))): void {
  let active:ProfileSnapshot=snapshotProfile(STANDARD_PROFILE);
  let hasStoredProfile=false;
  let generation=0;
  let controller:AbortController|undefined;
+ let selectedDefinition:ProfileDefinition|undefined;
+ let registration:ReturnType<typeof registerProfileAgents>|undefined;
+ let agentCatalog='';
+ let pendingSkillSync=false;
+ let resourceAgents:ReturnType<typeof loadProfileResources>['agents']=[];
+ const release=()=>{registration?.dispose();registration=undefined;pendingSkillSync=false;resourceAgents=[];agentCatalog='';selectedDefinition=undefined;};
  pi.on("session_shutdown",()=>{
+  release();
   generation++;controller?.abort();controller=undefined;
   active=snapshotProfile(STANDARD_PROFILE);
   hasStoredProfile=false;
  });
  pi.on("session_start",async(event,ctx)=>{
+  release();
+  const {profiles,warnings}=loadProfiles(profilesRoot);
+  for(const warning of warnings)ctx.ui.notify(warning,'warning');
   controller?.abort();
   const current=++generation; const sessionId=ctx.sessionManager.getSessionId();
   active=snapshotProfile(STANDARD_PROFILE);
@@ -30,8 +43,6 @@ export default function startupProfile(pi: ExtensionAPI): void {
   if(restored.invalid) ctx.ui.notify("profileの保存状態が不正です。共通指示のみのOtherで開きます。","warning");
   if(decision==="restore"){ active=restored.snapshot!; hasStoredProfile=true; }
   else if(decision==="select"){
-   const {profiles,warnings}=loadProfiles(fileURLToPath(new URL("./profiles/",import.meta.url)));
-   for(const warning of warnings) ctx.ui.notify(warning,"warning");
    const options=profiles.map(p=>"["+p.id+"] "+p.label+" — "+p.description);
    controller=new AbortController();
    const selected=await ctx.ui.select("会話のprofileを選択",options,{signal:controller.signal});
@@ -46,7 +57,24 @@ export default function startupProfile(pi: ExtensionAPI): void {
    pi.appendEntry(STATE_ENTRY_TYPE,active);
    hasStoredProfile=true;
   }
+  if(!restored.invalid){
+   selectedDefinition=profiles.find(p=>p.id===active.id);
+   if(!selectedDefinition&&active.id!=='standard')ctx.ui.notify('Profileの追加リソースを読み込めません: '+active.id,'warning');
+  }
   ctx.ui.setStatus("startup-profile","profile:"+active.label);
+ });
+ pi.on('resources_discover',(_event,ctx)=>{
+  registration?.dispose();registration=undefined;agentCatalog='';
+  if(!selectedDefinition)return {skillPaths:[]};
+  const common=commonSkillsFromCommands(pi.getCommands());
+  const current=generation, sessionId=ctx.sessionManager.getSessionId();
+  const resources=loadProfileResources(selectedDefinition,common.skills,true);
+  const next=registerProfileAgents(pi,resources.agents);
+  if(current!==generation||sessionId!==ctx.sessionManager.getSessionId()){next.dispose();return {skillPaths:[]};}
+  registration=next;resourceAgents=resources.agents;pendingSkillSync=resourceAgents.some(a=>a.definition.skills!==undefined);
+  for(const warning of [...common.warnings,...resources.warnings,...next.warnings])ctx.ui.notify(warning,'warning');
+  agentCatalog=resources.agents.filter(a=>next.names.includes(a.name)).map(a=>a.name+' — '+a.definition.description).join('\n');
+  return {skillPaths:resources.skillPaths};
  });
  pi.on("session_tree",(_event,ctx)=>{
   if(!hasStoredProfile) return;
@@ -55,5 +83,30 @@ export default function startupProfile(pi: ExtensionAPI): void {
   const branch=readSnapshot(ctx.sessionManager.getBranch());
   if(!branch.snapshot && !branch.invalid) pi.appendEntry(STATE_ENTRY_TYPE,active);
  });
- pi.on("before_agent_start",(event)=>applyProfilePrompt(event,active));
+ pi.on('before_agent_start',(event,ctx)=>{
+  if(pendingSkillSync){
+   // All extensions' resources have now merged; use the parent's actual winners.
+   pendingSkillSync=false;
+   const current=generation,sessionId=ctx.sessionManager.getSessionId();
+   const common=commonSkillsFromCommands(pi.getCommands());
+   const candidates=new Map(common.skills.map(s=>[s.name,s.filePath]));
+   const agents:typeof resourceAgents=[];
+   for(const agent of resourceAgents){
+    try{agents.push({...agent,definition:{...agent.definition,...(agent.definition.skills!==undefined?{skillPath:resolveAgentSkillPaths(agent.definition.skills,candidates)}:{})}});}
+    catch(error){ctx.ui.notify(agent.name+': '+String(error),'warning');}
+   }
+   registration?.dispose();registration=undefined;
+   const next=registerProfileAgents(pi,agents);
+   if(current!==generation||sessionId!==ctx.sessionManager.getSessionId()){next.dispose();return;}
+   registration=next;
+   for(const warning of [...common.warnings,...next.warnings])ctx.ui.notify(warning,'warning');
+   agentCatalog=agents.filter(a=>next.names.includes(a.name)).map(a=>a.name+' — '+a.definition.description).join('\n');
+  }
+  const result=applyProfilePrompt(event,active);
+  if(!agentCatalog)return result;
+  const instructions='選択Profileの追加サブエージェント（使用許可を得た作業でのみ利用）:\n'+agentCatalog;
+  if(event.systemPromptOptions.forceSystemPrompt!==undefined)return {systemPrompt:(result?.systemPrompt??event.systemPrompt)+'\n\n'+instructions};
+  event.systemPromptOptions.sections.profile_agents=instructions;
+  return result;
+ });
 }

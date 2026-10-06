@@ -1,0 +1,7 @@
+{
+  "id": "chore",
+  "label": "Chore（雑務）",
+  "description": "整理・定型作業などの雑務を支援",
+  "order": 40,
+  "enabled": true
+}
