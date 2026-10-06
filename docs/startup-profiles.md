@@ -10,11 +10,12 @@
 
 Secretaryは新規選択肢から外しました。`secretary.md` は残しており、既存会話の保存済み指示は変更しません。
 
-認証アカウント、モデル、思考レベル、スキル、ツール、MCPは変えません。共通安全ルールとプロジェクト指示は維持します。認証を切り替える既存のランチャーとは独立した機能です。
+認証アカウント、親モデル、思考レベル、ツール、MCPは変えません。共通のスキル・エージェントを維持し、選択Profileの追加スキル・専用名エージェントを会話に読み込みます。共通安全ルールとプロジェクト指示は維持します。認証ランチャーとは独立しています。
 
 ## 会話の再開
 
 会話に選択した指示本文を固定して保存します。再開・reloadでは選択画面を出さず、その本文を復元します。fork/cloneも継承します。定義ファイルを変更・削除しても既存会話には反映されません。導入前の会話はOtherで開きます。
+スキル・エージェントは指示本文とは別です。再開・reload時に現在のフォルダを読み直します。削除・無効化されたProfileの既存会話では、保存済み指示だけを復元して追加機能は読み込みません。参照スクリプトなどの完全固定や実行サンドボックスを保証しません。
 
 選択直後はPiの会話内メモリに登録され、初回ユーザーメッセージと一緒に会話ファイルへ保存されます。何も送信せず終了した場合、会話ファイルは作られず、次の新規起動で再び選びます。`--no-session` は終了後に復元できません。
 
@@ -22,14 +23,44 @@ print / JSON / RPCの新規会話はOtherで、選択待ちをしません。保
 
 ## Profileの追加
 
-`extensions/startup-profile/profiles/catalog.json` に次のような項目を追加し、同じディレクトリへ本文Markdownを置きます。
-一覧はcatalogの記載順に表示します。Otherの項目が欠けている・不正な場合も、追加指示なしのOtherを末尾に補います。
+`extensions/startup-profile/profiles/` にProfileごとのフォルダを作ります。
 
-```json
-{"id":"writing","label":"執筆","description":"文章の構成と編集を支援","instructionsFile":"writing.md"}
+```text
+research/
+  profile.json
+  instructions.md
+  skills/source-check/SKILL.md
+  agents/investigator.md
 ```
 
-IDは小文字英数字とハイフンで一意にします。OtherのID `standard` に指示ファイルは付けられません。Markdownはcatalogディレクトリ内に置きます。外部パス・親ディレクトリ遡り・外部へ出るsymlinkは拒否します。読み込めないprofileは警告して除外し、catalog全体が壊れた場合はOtherだけを表示します。
+```json
+{"id":"research","label":"Research","description":"出典を確認して調査","order":10,"enabled":true}
+```
+
+表示順はorder（省略時100）、同順位はID順。enabled:falseで新規選択から外します。Other（id standard）はinstructions.mdを置かず、欠落・不正でも既定値として補完されます。DevelopmentのIDはdeveloperのままです。
+
+スキルは通常のAgent Skills形式です。通常の共通スキルと同名なら共通を優先します。他拡張から追加された同名スキルはPiの読み込み順（先に発見した方）に従い、子の明示選択もマージ後の親と同じファイルに揃えます。親ではSKILL.mdのnameが使われますが、子で選択するスキルはフォルダ名（単独.mdならファイル名）もnameと一致させてください。不一致はエージェントの登録時に警告して除外します。
+
+エージェントはagents直下にMarkdownで置きます。
+
+```yaml
+---
+name: investigator
+description: 出典の裏付けを確認
+skills: source-check
+tools: read, bash
+---
+出典を確認し、事実と推測を分ける。
+```
+
+呼び出し名は`profile.research.investigator`です。共通とProfileを同名で上書きせず、別担当として利用します。共通側でprofile.始まりの完全名・別名を使わないでください。意図的な完全名衝突の自動復旧は保証しません。
+
+設定項目はname/description/tools/skills/model/thinking/systemPromptMode/inheritProjectContext/inheritGlobalContext/inheritSkillsのみ。未知の項目は除外します。既定はappend、project/global指示の継承あり、全スキル継承なし。skillsで明示選択し、親が採用したスキルを子にも渡します。tools省略は通常設定、[]はツールなし。ツールの名前を書くだけではその拡張providerは読み込まれません。
+toolsに `/` を含む値や `.ts` / `.js` のパスは指定できません。pi-subagentsが拡張コードとして読み込むため、Profile側で拒否します。
+
+追加エージェントには対応するpi-subagentsが必要です（0.76.1で検証）。未導入・未対応なら警告し、指示・スキルはそのまま利用できます。子への全Profileエージェント登録、入れ子委任、外部runnerや拡張コードの自動導入は行いません。
+
+既存catalog.json形式も利用可能です。新フォルダと同IDは新形式優先。無効化したIDが旧catalogで復活することはありません。外部へ出るsymlink・パス逸脱は拒否します。
 
 本文は新しい会話にのみ適用します。共通ルールを緩める指示や、秘密情報・パスワード・APIキーを入れないでください。保存本文は会話ファイルに含まれ、export/shareで公開される可能性があります。
 
@@ -41,7 +72,7 @@ IDは小文字英数字とハイフンで一意にします。OtherのID `standa
 
 ## 開発時の検証
 
-Pi 1.0.2 / Node 26.10.0で検証。初版のNode要件は26.10.0以上です。他のPi・Node版は未検証です。新しい実行時依存はありません。
+Pi 1.0.2・1.0.4 / Node 26.10.0で検証。Node要件は26.10.0以上です。他のPi・Node版は未検証です。新しい実行時依存はありません。
 
 ```sh
 npm ci --ignore-scripts
@@ -51,7 +82,7 @@ python3 -m unittest discover -s scripts/tests -v
 python3 scripts/test-startup-profile-cli.py --pi "$(command -v pi)"
 ```
 
-基本検証はmy-piなしで実行できます。外部拡張との互換ケース1件は明示的にskipされます。互換検証は別途、既存の両拡張パスを指定します。
+基本検証はmy-piなしで実行できます。Plan/omp互換1件とpi-subagents実起動3件（基本・共通拡張の前後順序）は、既存拡張パスを指定しない場合skipされます。pi-subagentsの基本検証は `--case profile_subagent_resources --subagents-extension /path/to/pi-subagents/index.js` です。全件実行には両互換拡張とsubagents拡張のパスを指定します。
 
 ```sh
 python3 scripts/test-startup-profile-cli.py --pi "$(command -v pi)" \

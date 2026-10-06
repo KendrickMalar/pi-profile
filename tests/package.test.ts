@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { loadProfiles } from '../extensions/startup-profile/catalog.ts';
 
 const root = new URL("../", import.meta.url);
 test("the distributable manifest exposes one existing extension with its catalog", () => {
@@ -13,9 +14,12 @@ test("the distributable manifest exposes one existing extension with its catalog
   assert.equal(manifest.peerDependencies["@earendil-works/pi-coding-agent"], "*");
   assert.equal(manifest.dependencies?.["@earendil-works/pi-coding-agent"], undefined);
   assert.ok(existsSync(new URL(manifest.pi.extensions[0], root)));
-  const catalog = JSON.parse(readFileSync(new URL("extensions/startup-profile/profiles/catalog.json", root), "utf8"));
-  assert.deepEqual(catalog.map((p: { id: string }) => p.id), ["research", "specification", "developer", "chore", "standard"]);
-  for (const profile of catalog) {
-    if (profile.instructionsFile) assert.ok(existsSync(fileURLToPath(new URL("extensions/startup-profile/profiles/" + profile.instructionsFile, root))));
+  const directory=fileURLToPath(new URL('extensions/startup-profile/profiles/',root));
+  const profiles=loadProfiles(directory).profiles;
+  assert.deepEqual(profiles.map(p=>p.id),['research','specification','developer','chore','standard']);
+  for(const p of profiles){
+    assert.ok(p.directory,'Profile must be managed as a folder');
+    if(p.id!=='standard')assert.equal(p.instructions,readFileSync(new URL('extensions/startup-profile/profiles/'+p.id+'.md',root),'utf8'));
   }
+  assert.equal(manifest.pi.skills,undefined);
 });

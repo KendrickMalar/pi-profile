@@ -1,0 +1,7 @@
+{
+  "id": "developer",
+  "label": "Development",
+  "description": "コード・設計・検証を中心に支援",
+  "order": 30,
+  "enabled": true
+}

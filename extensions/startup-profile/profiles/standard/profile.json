@@ -1,0 +1,7 @@
+{
+  "id": "standard",
+  "label": "Other",
+  "description": "用途別の指示を追加しない",
+  "order": 50,
+  "enabled": true
+}

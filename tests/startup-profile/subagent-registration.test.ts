@@ -1,0 +1,7 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {registerProfileAgents} from '../../extensions/startup-profile/subagent-registration.ts';
+const agents=[{name:'profile.research.a',definition:{description:'A',systemPrompt:'A',systemPromptMode:'append' as const,inheritProjectContext:true,inheritGlobalContext:true,inheritSkills:false}}];
+test('missing_owner_keeps_other_resources',()=>{const r=registerProfileAgents({events:{emit:()=>{}}} as any,agents);assert.deepEqual(r.names,[]);assert.ok(r.warnings.length);});
+test('malformed_owner_response_does_not_claim_success',()=>{const r=registerProfileAgents({events:{emit:(_n:string,r:any)=>{r.result={ok:true};}}} as any,agents);assert.deepEqual(r.names,[]);assert.ok(r.warnings.length);});
+test('dispose_is_idempotent',()=>{let disposed=0;const r=registerProfileAgents({events:{emit:(n:string,r:any)=>{assert.equal(n,'pi-subagents:runtime-agent-register:v1');assert.equal(r.name,'profile.research.a');r.result={ok:true,registration:{dispose:()=>disposed++}};}}} as any,agents);assert.deepEqual(r.names,['profile.research.a']);r.dispose();r.dispose();assert.equal(disposed,1);});
+test('partial_registration_keeps_valid_agents',()=>{const r=registerProfileAgents({events:{emit:(_n:string,r:any)=>{r.result=r.name.endsWith('.a')?{ok:true,registration:{dispose(){}}}:{ok:false,error:new Error('rejected')};}}} as any,[...agents,{...agents[0],name:'profile.research.b'}]);assert.deepEqual(r.names,['profile.research.a']);assert.equal(r.warnings.length,1);});
