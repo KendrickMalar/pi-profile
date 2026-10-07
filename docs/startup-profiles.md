@@ -25,7 +25,7 @@ print / JSON / RPCの新規会話はOtherで、選択待ちをしません。保
 
 普段は **`~/.pi/agent/profiles/`** にProfileごとのフォルダを作り、編集します。リポジトリ内の `extensions/startup-profile/profiles/` はサンプルです。個人設定と混ぜて読み込まず、サンプルを編集しても普段のProfileには反映されません。
 
-初期配置は一度だけ行います。保存先が未作成であることを確認し、5つのサンプルフォルダ（research/specification/development/chore/standard）と空のcatalog.jsonをコピーしてください。既存ファイル・フォルダ・symlinkがある場合は上書きせず先に確認します。旧平置きMarkdownやsecretary.md、拡張コード、node_modulesはコピー不要です。
+初期配置は一度だけ行います。保存先が未作成であることを確認し、5つのサンプルフォルダ（research/specification/development/chore/standard）をコピーしてください。空のcatalog.jsonはコピー不要です。既存ファイル・フォルダ・symlinkがある場合は上書きせず先に確認します。旧平置きMarkdownやsecretary.md、拡張コード、node_modulesはコピー不要です。
 
 起動時の自動コピーや自動作成はしません。保存先がない・空ならOtherだけになります。個人Profileを消してもサンプルから復活しません。以後の編集はホーム側で行い、追加リソースは再開/reloadで読み直します。
 
@@ -73,7 +73,7 @@ toolsに `/` を含む値や `.ts` / `.js` のパスは指定できません。p
 
 追加エージェントには対応するpi-subagentsが必要です（0.76.1で検証）。未導入・未対応なら警告し、指示・スキルはそのまま利用できます。子への全Profileエージェント登録、入れ子委任、外部runnerや拡張コードの自動導入は行いません。
 
-既存catalog.json形式も利用可能です。新フォルダと同IDは新形式優先。無効化したIDが旧catalogで復活することはありません。外部へ出るsymlink・パス逸脱は拒否します。
+既存catalog.json形式も利用可能ですが、ファイルは任意です。フォルダ形式だけなら不要で、空のcatalog.jsonは削除しても欠落による警告は出ません。不正JSON・読み取り不能・リンク先がないcatalogのsymlinkは引き続き警告します。新フォルダと同IDは新形式優先。無効化したIDが旧catalogで復活することはありません。外部へ出るsymlink・パス逸脱は拒否します。
 
 本文は新しい会話にのみ適用します。共通ルールを緩める指示や、秘密情報・パスワード・APIキーを入れないでください。保存本文は会話ファイルに含まれ、export/shareで公開される可能性があります。
 
