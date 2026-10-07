@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, symlinkSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, unlinkSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadProfiles } from "../../extensions/startup-profile/catalog.ts";
+import { loadProfiles, loadLegacyProfiles } from "../../extensions/startup-profile/catalog.ts";
 function fixture(t: any, items: unknown = [{id:"standard",label:"標準",description:"標準"},{id:"developer",label:"開発",description:"コード",instructionsFile:"developer.md"}]) {
  const dir=mkdtempSync(join(tmpdir(),"profiles-")); t.after(()=>rmSync(dir,{recursive:true,force:true}));
  writeFileSync(join(dir,"catalog.json"),JSON.stringify(items)); writeFileSync(join(dir,"developer.md"),"開発 fixture"); return dir;
@@ -44,7 +44,7 @@ test("invalid catalog returns standard with warning",t=>{
  const dir=fixture(t); writeFileSync(join(dir,"catalog.json"),"{");
  const r=loadProfiles(dir); assert.deepEqual(r.profiles.map(p=>p.id),["standard"]); assert.ok(r.warnings.length);
 });
-test("missing catalog returns standard with warning",()=>{ const r=loadProfiles("/no-such-profile-directory"); assert.equal(r.profiles[0].instructions,""); assert.ok(r.warnings.length); });
+test("missing profile root returns standard with warning",()=>{ const r=loadProfiles("/no-such-profile-directory"); assert.equal(r.profiles[0].instructions,""); assert.ok(r.warnings.length); });
 test("missing Markdown skips the broken profile",t=>{
  const r=loadProfiles(fixture(t,[{id:"developer",label:"開発",description:"",instructionsFile:"missing.md"}]));
  assert.deepEqual(r.profiles.map(p=>p.id),["standard"]); assert.ok(r.warnings.length);
@@ -52,4 +52,51 @@ test("missing Markdown skips the broken profile",t=>{
 test("standard cannot acquire persona instructions",t=>{
  const r=loadProfiles(fixture(t,[{id:"standard",label:"標準",description:"",instructionsFile:"developer.md"}]));
  assert.equal(r.profiles[0].instructions,""); assert.ok(r.warnings.length);
+});
+
+test("folder profiles load without an optional legacy catalog or warnings",t=>{
+ const dir=fixture(t); unlinkSync(join(dir,"catalog.json"));
+ mkdirSync(join(dir,"development"));
+ writeFileSync(join(dir,"development/profile.json"),JSON.stringify({id:"developer",label:"Development",description:""}));
+ writeFileSync(join(dir,"development/instructions.md"),"FOLDER RULE");
+ const r=loadProfiles(dir);
+ assert.deepEqual(r.profiles.map(p=>p.id),["developer","standard"]);
+ assert.equal(r.profiles[0].instructions,"FOLDER RULE");
+ assert.deepEqual(r.warnings,[]);
+});
+test("empty root without a legacy catalog returns Other without warnings",t=>{
+ const dir=fixture(t); unlinkSync(join(dir,"catalog.json")); unlinkSync(join(dir,"developer.md"));
+ const r=loadProfiles(dir);
+ assert.deepEqual(r.profiles.map(p=>[p.id,p.label,p.instructions]),[["standard","Other",""]]);
+ assert.deepEqual(r.warnings,[]);
+});
+test("missing legacy catalog respects the fallback flag without warnings",t=>{
+ const dir=fixture(t); unlinkSync(join(dir,"catalog.json"));
+ assert.deepEqual(loadLegacyProfiles(dir,false),{profiles:[],warnings:[]});
+ const r=loadLegacyProfiles(dir);
+ assert.deepEqual(r.profiles.map(p=>[p.id,p.label,p.instructions]),[["standard","Other",""]]);
+ assert.deepEqual(r.warnings,[]);
+});
+test("catalog directory still produces a read warning",t=>{
+ const dir=fixture(t); unlinkSync(join(dir,"catalog.json")); mkdirSync(join(dir,"catalog.json"));
+ const r=loadProfiles(dir);
+ assert.deepEqual(r.profiles.map(p=>p.id),["standard"]);
+ assert.ok(r.warnings.some(w=>w.includes("profile catalog:") && w.includes("EISDIR")));
+});
+test("unreadable catalog still produces a read warning",t=>{
+ if(process.getuid?.()===0)return t.skip("requires nonprivileged POSIX process");
+ const dir=fixture(t); const catalog=join(dir,"catalog.json");
+ chmodSync(catalog,0);
+ try {
+  const r=loadProfiles(dir);
+  assert.deepEqual(r.profiles.map(p=>p.id),["standard"]);
+  assert.ok(r.warnings.some(w=>w.includes("profile catalog:") && w.includes("EACCES")));
+ } finally { chmodSync(catalog,0o600); }
+});
+test("broken catalog symlink still produces a read warning",t=>{
+ const dir=fixture(t); unlinkSync(join(dir,"catalog.json"));
+ symlinkSync(join(dir,"missing.json"),join(dir,"catalog.json"));
+ const r=loadProfiles(dir);
+ assert.deepEqual(r.profiles.map(p=>p.id),["standard"]);
+ assert.ok(r.warnings.some(w=>w.includes("profile catalog:") && w.includes("ENOENT")));
 });

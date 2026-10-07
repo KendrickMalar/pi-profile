@@ -44,7 +44,7 @@ There is no mid-conversation switch or profile CLI flag.
 
 Manage one folder per personal profile under **`~/.pi/agent/profiles/`**. The package's `extensions/startup-profile/profiles/` contains samples only; it is not an active configuration source.
 
-Create the personal directory once and copy the five sample folders (`research`, `specification`, `development`, `chore`, `standard`) plus the empty `catalog.json` from the package. Keep their IDs unchanged. Inspect any existing destination first: do not overwrite or merge existing user definitions. Pi does not create or copy profiles automatically. Missing or empty personal roots use Other; deleting a personal profile does not bring back its sample.
+Create the personal directory once and copy the five sample folders (`research`, `specification`, `development`, `chore`, `standard`) from the package. An empty `catalog.json` is optional. Keep their IDs unchanged. Inspect any existing destination first: do not overwrite or merge existing user definitions. Pi does not create or copy profiles automatically. Missing or empty personal roots use Other; deleting a personal profile does not bring back its sample.
 
 To use another root for an invocation:
 
@@ -91,7 +91,7 @@ Path-like `tools` entries (including `/` or a `.ts`/`.js` suffix) are rejected: 
 
 Profile instructions remain saved in the conversation. Additional resources are read from current files on resume/reload; missing or disabled profiles retain saved instructions without their additional resources. Changes to referenced scripts/files are not a fully immutable snapshot or sandbox.
 
-Legacy `catalog.json` definitions still work. Folder definitions take precedence over the same legacy ID, including disabled definitions. Other is always available as a safe fallback. External symlink/path escapes are rejected.
+Legacy `catalog.json` definitions still work. The file is optional: folder-only profiles need no catalog, and its absence produces no warning. Invalid JSON, unreadable catalogs, and dangling catalog symlinks still produce warnings. Folder definitions take precedence over the same legacy ID, including disabled definitions. Other is always available as a safe fallback. External symlink/path escapes are rejected.
 
 Instructions apply only to new conversations. **Never put credentials or secrets in a profile:** the literal text is saved in the conversation and may be exposed in exports or shares. Profiles should not weaken common safety rules or project instructions.
 

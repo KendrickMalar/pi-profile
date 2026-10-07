@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync, lstatSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { scanFolderProfiles } from './folder-profile.ts';
 
@@ -11,8 +11,22 @@ export const STANDARD_PROFILE: ProfileDefinition = Object.freeze({
 export function loadLegacyProfiles(directory: string, includeFallback = true): { profiles: ProfileDefinition[]; warnings: string[] } {
  const warnings: string[] = [];
  const profiles: ProfileDefinition[] = [];
+ const catalogPath = resolve(directory,"catalog.json");
+ let catalog: string;
+ try { catalog = readFileSync(catalogPath,"utf8"); }
+ catch (error) {
+  if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+   // A missing optional catalog is normal; a dangling symlink is still broken.
+   try { lstatSync(catalogPath); }
+   catch (entryError) {
+    if ((entryError as NodeJS.ErrnoException).code === "ENOENT")
+     return {profiles:includeFallback ? [{...STANDARD_PROFILE}] : [], warnings:[]};
+   }
+  }
+  return {profiles:includeFallback ? [{...STANDARD_PROFILE}] : [], warnings:["profile catalog: "+String(error)]};
+ }
  try {
-  const items: unknown = JSON.parse(readFileSync(resolve(directory,"catalog.json"),"utf8"));
+  const items: unknown = JSON.parse(catalog);
   if (!Array.isArray(items)) throw new Error("catalog must be an array");
   const ids = new Set<string>();
   for (const item of items) {
