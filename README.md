@@ -12,6 +12,12 @@ Choose a purpose when starting a new interactive conversation or using `/new`:
 
 The included instructions and selector text are Japanese. Each profile has its own folder, optional skills, and optional namespaced subagents.
 
+## Optional startup launcher and Profile packages
+
+The package also provides a built JavaScript `pi-profile` CLI. It selects a Profile before normal Pi starts and resolves that Profile's npm/Git/local packages with Pi's standard behavior; it does not add offline or disable automatic acquisition. A launched process keeps its Profile across `/new`, and different-Profile sessions require a new process. Existing plain `pi` entrypoints keep their original selector.
+
+The new CLI supports npm-installed Pi 1.0.4 / Node 26.10.0+ on macOS/Linux. Account-launcher rollout and bin registration are separate explicit changes. See [Profile package launcher](docs/profile-package-launcher.md) for configuration, management, recovery and limits.
+
 ## Install
 
 Requires **Pi 1.0.2 or newer** (tested on 1.0.2 and 1.0.4) and **Node 26.10.0 or newer**. Other Pi and Node versions have not been validated.

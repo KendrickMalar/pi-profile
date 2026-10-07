@@ -85,6 +85,8 @@ class Acceptance(unittest.TestCase):
         self.extension = self.package / "extensions/startup-profile"
         shutil.copytree(ROOT/"extensions/startup-profile", self.extension)
         shutil.copyfile(ROOT/"package.json", self.package/"package.json")
+        for dependency in ('src', 'dist'):
+            if (ROOT/dependency).is_dir(): shutil.copytree(ROOT/dependency, self.package/dependency)
         self.profiles = self.home / '.pi/agent/profiles'
         self.profiles.parent.mkdir(parents=True)
         shutil.copytree(self.extension/'profiles', self.profiles)
@@ -502,7 +504,7 @@ class Acceptance(unittest.TestCase):
     def test_profile_extension_skill_after(self):
         self.subagent_resources('after')
 
-    def subagent_resources(self, extension_order=None):
+    def subagent_resources(self, extension_order=None, fixed_profile=False):
         if not OPTIONS.subagents_extension:
             self.skipTest('pass --subagents-extension for real child integration')
         self.resource_fixture()
@@ -539,18 +541,23 @@ class Acceptance(unittest.TestCase):
                     self.assertIn(winner,text)
                     self.assertNotIn('RESEARCH_SKILL_BODY' if winner=='COMMON_SKILL_BODY' else 'COMMON_SKILL_BODY',text)
                 self.assertNotIn('DEVELOPMENT_SKILL_BODY',text)
-        mark=len(c.data);c.send('/new\r');c.wait(lambda:'会話のprofileを選択' in c.text(mark))
-        c.send('\x1b[B\x1b[B\r');c.wait(lambda:'profile:Development' in c.text(mark))
-        body=json.dumps(self.prompt(c,'catalog after new'))
-        self.assertIn('profile.developer.helper',body)
-        self.assertNotIn('profile.research.helper',body)
-        agent=self.profiles/'development/agents/helper.md';agent.rename(self.home/'removed-helper.md')
-        local_skill=self.profiles/'development/skills/profile-check/SKILL.md';local_skill.rename(self.home/'removed-development-skill.md')
+        mark=len(c.data);c.send('/new\r')
+        if fixed_profile:
+            c.wait(lambda:'New session started' in c.text(mark)); self.assertNotIn('会話のprofileを選択',c.text(mark))
+            body=json.dumps(self.prompt(c,'catalog after new')); self.assertIn('profile.research.helper',body); self.assertNotIn('profile.developer.helper',body)
+            profile_id='research'; removed_marker='RESEARCH_SKILL_BODY'
+        else:
+            c.wait(lambda:'会話のprofileを選択' in c.text(mark))
+            c.send('\x1b[B\x1b[B\r');c.wait(lambda:'profile:Development' in c.text(mark))
+            body=json.dumps(self.prompt(c,'catalog after new'));self.assertIn('profile.developer.helper',body);self.assertNotIn('profile.research.helper',body)
+            profile_id='development'; removed_marker='DEVELOPMENT_SKILL_BODY'
+        agent=self.profiles/profile_id/'agents/helper.md';agent.rename(self.home/'removed-helper.md')
+        local_skill=self.profiles/profile_id/'skills/profile-check/SKILL.md';local_skill.rename(self.home/'removed-profile-skill.md')
         mark=len(c.data);c.send('/reload\r');c.wait(lambda:'Reloaded' in c.text(mark) or 'reloaded' in c.text(mark))
         body=self.prompt(c,'after resource removal')
         system=json.dumps([m for m in body['messages'] if m['role']=='system'])
-        self.assertNotIn('profile.developer.helper',system)
-        self.assertNotIn('DEVELOPMENT_SKILL_BODY',system)
+        self.assertNotIn('profile.'+('research' if fixed_profile else 'developer')+'.helper',system)
+        self.assertNotIn(removed_marker,system)
 
     def test_profile_home_separation(self):
         self.resource_fixture()

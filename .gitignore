@@ -1,4 +1,5 @@
 node_modules/
+dist/
 .superpowers/
 .test-evidence/
 __pycache__/

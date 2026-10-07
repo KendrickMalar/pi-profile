@@ -12,9 +12,12 @@
   "keywords": [
     "pi-package"
   ],
+  "bin": {"pi-profile": "dist/src/cli.js"},
   "files": [
+    "dist/",
+    "src/",
     "extensions/startup-profile/",
-    "docs/",
+    "docs/*.md",
     "README.md",
     "LICENSE"
   ],
@@ -27,7 +30,8 @@
     ]
   },
   "scripts": {
-    "test": "node --experimental-strip-types --test tests/*.test.ts tests/startup-profile/*.test.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "node --experimental-strip-types --test tests/*.test.ts tests/startup-profile/*.test.ts tests/launcher/*.test.ts",
     "typecheck": "tsc --noEmit",
     "test:cli": "python3 scripts/test-startup-profile-cli.py"
   },
