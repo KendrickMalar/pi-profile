@@ -1,5 +1,12 @@
 # 起動時の用途別profile
 
+
+## 起動前ランチャー経由の追加機能
+
+`pi-profile launch` を使う場合だけ、Pi本体の起動前に用途を選び、専用パッケージを標準PackageManagerで解決します。保存会話は保存Profileを復元し、`/new` は起動時のProfileを継続します。別Profileへは再起動します。以下の従来のPi内選択の説明は、素の `pi` で拡張単体を使う経路に適用します。
+
+専用宣言は個人Profile内のpackages.json、保存先は ~/.pi/profile-packages/<ID>/ です。未導入時の取得や依存解決、reloadの失敗扱いは標準Piに従い、--offlineは追加しません。認証用agentDirや共有settingsは切り替えません。詳細は [Profile package launcher](profile-package-launcher.md) を参照してください。稼働するpi-accountへの接続は別承認の導入作業です。
+
 新しい対話会話を開始すると、次の順に選べます。`/new` でも選び直せます。EscならOtherです。同じ会話の途中では変更しません。
 
 1. Research: 情報やデータを調べ、出典付きのMarkdown・比較表・一覧などにまとめる（`research.md`）。

@@ -9,8 +9,12 @@ import { applyProfilePrompt } from "./prompt.ts";
 import type { ProfileDefinition } from './catalog.ts';
 import { commonSkillsFromCommands, loadProfileResources, resolveAgentSkillPaths } from './profile-resources.ts';
 import { registerProfileAgents } from './subagent-registration.ts';
+import {readLaunchContext} from '../../src/launch-context.ts';
+import {attachLaunchBridge} from './launch-bridge.ts';
 
 export default function startupProfile(pi: ExtensionAPI, profilesRoot?: string): void {
+ const contextFile=process.env.PI_SUBAGENT_CHILD==='1'?undefined:process.env.PI_PROFILE_LAUNCH_CONTEXT;
+ const bridge=contextFile?attachLaunchBridge(pi,readLaunchContext(contextFile)):undefined;
  let active:ProfileSnapshot=snapshotProfile(STANDARD_PROFILE);
  let hasStoredProfile=false;
  let generation=0;
@@ -49,9 +53,11 @@ export default function startupProfile(pi: ExtensionAPI, profilesRoot?: string):
   const file=ctx.sessionManager.getSessionFile();
   const existingFile=Boolean(file && existsSync(file));
   const hasConversation=entries.some(e=>e.type==="message" && (e.message.role==="user" || e.message.role==="assistant"));
-  const decision=decideSessionProfile({reason:event.reason,mode:ctx.mode,existingFile,hasConversation,restored});
+  const fixed=bridge?.profileForSession(event,ctx);
+  const decision=bridge ? (restored.snapshot?'restore':'standard') : decideSessionProfile({reason:event.reason,mode:ctx.mode,existingFile,hasConversation,restored});
   if(restored.invalid) ctx.ui.notify("profileの保存状態が不正です。共通指示のみのOtherで開きます。","warning");
-  if(decision==="restore"){ active=restored.snapshot!; hasStoredProfile=true; }
+  if(fixed){active=fixed;hasStoredProfile=true;if(!restored.snapshot)pi.appendEntry(STATE_ENTRY_TYPE,active);}
+  else if(decision==="restore"){ active=restored.snapshot!; hasStoredProfile=true; }
   else if(decision==="select"){
    const options=profiles.map(p=>"["+p.id+"] "+p.label+" — "+p.description);
    controller=new AbortController();
