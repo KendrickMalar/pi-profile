@@ -4,10 +4,10 @@
   "description": "Session-scoped startup instruction profiles for Pi",
   "type": "module",
   "license": "MIT",
-  "author": "Papillon6814",
+  "author": "KendrickMalar",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Papillon6814/pi-profile.git"
+    "url": "https://github.com/KendrickMalar/pi-profile.git"
   },
   "keywords": [
     "pi-package"
