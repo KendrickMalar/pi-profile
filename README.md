@@ -17,7 +17,7 @@ The included instructions and selector text are Japanese. Each profile has its o
 Requires **Pi 1.0.2 or newer** (tested on 1.0.2 and 1.0.4) and **Node 26.10.0 or newer**. Other Pi and Node versions have not been validated.
 
 ```sh
-pi install git:github.com/Papillon6814/pi-profile
+pi install git:github.com/KendrickMalar/pi-profile
 ```
 
 Restart Pi to load the extension. For a local checkout:
@@ -135,4 +135,4 @@ See [the detailed Japanese guide](docs/startup-profiles.md).
 
 ## License
 
-MIT © 2026 Papillon6814.
+MIT © 2026 KendrickMalar.
