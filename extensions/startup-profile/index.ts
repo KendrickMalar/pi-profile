@@ -89,7 +89,7 @@ export default function startupProfile(pi: ExtensionAPI, profilesRoot?: string):
   if(current!==generation||sessionId!==ctx.sessionManager.getSessionId()){next.dispose();return {skillPaths:[]};}
   registration=next;resourceAgents=resources.agents;pendingSkillSync=resourceAgents.some(a=>a.definition.skills!==undefined);
   for(const warning of [...common.warnings,...resources.warnings,...next.warnings])ctx.ui.notify(warning,'warning');
-  agentCatalog=resources.agents.filter(a=>next.names.includes(a.name)).map(a=>a.name+' — '+a.definition.description).join('\n');
+  agentCatalog=resources.agents.filter(a=>a.advertise!==false&&next.names.includes(a.name)).map(a=>a.name+' — '+a.definition.description).join('\n');
   return {skillPaths:resources.skillPaths};
  });
  pi.on("session_tree",(_event,ctx)=>{
@@ -116,7 +116,7 @@ export default function startupProfile(pi: ExtensionAPI, profilesRoot?: string):
    if(current!==generation||sessionId!==ctx.sessionManager.getSessionId()){next.dispose();return;}
    registration=next;
    for(const warning of [...common.warnings,...next.warnings])ctx.ui.notify(warning,'warning');
-   agentCatalog=agents.filter(a=>next.names.includes(a.name)).map(a=>a.name+' — '+a.definition.description).join('\n');
+   agentCatalog=agents.filter(a=>a.advertise!==false&&next.names.includes(a.name)).map(a=>a.name+' — '+a.definition.description).join('\n');
   }
   const result=applyProfilePrompt(event,active);
   if(!agentCatalog)return result;
