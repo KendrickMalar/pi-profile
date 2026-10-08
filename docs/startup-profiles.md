@@ -75,7 +75,7 @@ tools: read, bash
 
 呼び出し名は`profile.research.investigator`です。共通とProfileを同名で上書きせず、別担当として利用します。共通側でprofile.始まりの完全名・別名を使わないでください。意図的な完全名衝突の自動復旧は保証しません。
 
-設定項目はname/description/tools/skills/model/thinking/systemPromptMode/inheritProjectContext/inheritGlobalContext/inheritSkillsのみ。未知の項目は除外します。既定はappend、project/global指示の継承あり、全スキル継承なし。skillsで明示選択し、親が採用したスキルを子にも渡します。tools省略は通常設定、[]はツールなし。ツールの名前を書くだけではその拡張providerは読み込まれません。
+設定項目はname/description/tools/skills/model/thinking/systemPromptMode/inheritProjectContext/inheritGlobalContext/inheritSkillsと、pi-subagentsの項目extensions/defaultContext/async/acceptanceRole/allowNestedSubagents/allowedAgents/advertiseです。未知の項目は除外します。extensionsは絶対パスか~/のみ。allowedAgentsに同じProfileのエージェントを短い名前で書くと、登録名profile.<id>.<name>に読み替えます（実行時定義でallowedAgentsを受け付けるpi-subagentsが必要。未対応なら登録しません）。登録したエージェントは、advertise: false以外は親のプロンプトで紹介します。既定はappend、project/global指示の継承あり、全スキル継承なし。skillsで明示選択し、親が採用したスキルを子にも渡します。tools省略は通常設定、[]はツールなし。ツールの名前を書くだけではその拡張providerは読み込まれません。
 toolsに `/` を含む値や `.ts` / `.js` のパスは指定できません。pi-subagentsが拡張コードとして読み込むため、Profile側で拒否します。
 
 追加エージェントには対応するpi-subagentsが必要です（0.76.1で検証）。未導入・未対応なら警告し、指示・スキルはそのまま利用できます。子への全Profileエージェント登録、入れ子委任、外部runnerや拡張コードの自動導入は行いません。
