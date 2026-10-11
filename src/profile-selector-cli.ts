@@ -8,6 +8,7 @@ import {
   type SelectorTheme,
   type SelectorWidth,
 } from "../extensions/startup-profile/selector-layout.ts";
+import { STANDARD_PROFILE } from "../extensions/startup-profile/catalog.ts";
 import type { PiHost } from "./pi-host.ts";
 import type { ProfileChoice } from "./select-profile.ts";
 
@@ -132,7 +133,7 @@ export function createCliProfileChooser(input: CliProfileChooserInput): Promise<
         if (!error && choice.kind !== "cancel") {
           const selected = choice.kind === "selected"
             ? items.find(item => item.id === choice.id)
-            : items.find(item => item.id === "standard") ?? { id: "standard", label: "Other", description: "" };
+            : STANDARD_PROFILE;
           if (selected) {
             const width = Math.max(1, io.stdout.columns ?? 80);
             io.stdout.write(`${renderProfileSelection(selected, width, icons, theme, widthTools)}\n`);

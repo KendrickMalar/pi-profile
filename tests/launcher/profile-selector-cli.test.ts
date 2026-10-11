@@ -239,3 +239,43 @@ test("dumb_has_no_color", async () => {
   await choice;
   assert.doesNotMatch(h.stdout.writes.join(""), /\x1b\[[0-9;]*m/);
 });
+
+test("escape_renamed_standard_displays_canonical_other_matching_snapshot", async () => {
+  const a = await api(), h = harness();
+  const { selectStartupProfile } = await import("../../src/select-profile.ts");
+  const profiles = [{ id: "standard", label: "独自の標準名", description: "標準", instructions: "" }];
+  const snapshot = await selectStartupProfile(
+    { kind: "new", cwd: "/", forwardedArgs: [] }, profiles, undefined,
+    async candidates => {
+      const choice = a.createCliProfileChooser({ items: candidates, env: h.env, widthTools, io: h.io });
+      h.stdin.emit("data", Buffer.from("\x1b"));
+      const result = await choice;
+      assert.deepEqual(result, { kind: "escape" });
+      return result;
+    },
+  );
+  assert.deepEqual(snapshot, { version: 1, id: "standard", label: "Other", instructions: "" });
+  const compactLine = h.stdout.writes.at(-1)!.replace(/\x1b\[[0-9;]*m/g, "");
+  assert.equal(compactLine, `◇ Profile  ${snapshot.label}\n`);
+  assert.equal((visibleOutput(h.stdout).match(/◇ Profile/g) ?? []).length, 1);
+});
+
+test("enter_renamed_standard_keeps_custom_label_matching_snapshot", async () => {
+  const a = await api(), h = harness();
+  const { selectStartupProfile } = await import("../../src/select-profile.ts");
+  const profiles = [{ id: "standard", label: "独自の標準名", description: "標準", instructions: "" }];
+  const snapshot = await selectStartupProfile(
+    { kind: "new", cwd: "/", forwardedArgs: [] }, profiles, undefined,
+    async candidates => {
+      const choice = a.createCliProfileChooser({ items: candidates, env: h.env, widthTools, io: h.io });
+      h.stdin.emit("data", Buffer.from("\r"));
+      const result = await choice;
+      assert.deepEqual(result, { kind: "selected", id: "standard" });
+      return result;
+    },
+  );
+  assert.deepEqual(snapshot, { version: 1, id: "standard", label: "独自の標準名", instructions: "" });
+  const compactLine = h.stdout.writes.at(-1)!.replace(/\x1b\[[0-9;]*m/g, "");
+  assert.equal(compactLine, `◇ Profile  ${snapshot.label}\n`);
+  assert.equal((visibleOutput(h.stdout).match(/◇ Profile/g) ?? []).length, 1);
+});
