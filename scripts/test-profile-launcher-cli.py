@@ -6,6 +6,17 @@ ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location("profile_base",ROOT/"scripts/test-startup-profile-cli.py")
 base=importlib.util.module_from_spec(spec);spec.loader.exec_module(base)
 OPTIONS=None
+
+def cli_profile_frame_complete(data, selected_label, color):
+ # renderProfileSelector's last row ends at this final hint (and color reset).
+ ending="Ctrl-C 中止".encode()+(b"\x1b[22m" if color else b"")
+ if not data.endswith(ending):return False
+ text=base.ANSI.sub("",data.decode("utf8","replace"))
+ selected=text.rfind("● "+selected_label);footer=text.rfind("└  ")
+ # Soft wrapping can split a word or discard the space between hint words.
+ footer_text="".join(text[footer:].split())
+ return selected>=0 and footer>selected and all(hint in footer_text for hint in ("↑↓選択","Enter開始","EscOther","Ctrl-C中止"))
+
 class Launcher(base.Acceptance):
  def setUp(self):
   super().setUp();self.launch_options=[];self.discovery=False;self.model="profile-fixture/fixture"
@@ -16,16 +27,86 @@ class Launcher(base.Acceptance):
   if not self.discovery:args.append("--no-extensions")
   for extension in self.pre_extensions+self.extra_extensions:args+=["-e",str(extension)]
   return args+list(extra)
+ def wait_profile_frame(self,c,selected_label,mark=0):
+  color=not self.env.get("NO_COLOR") and self.env.get("TERM")!="dumb"
+  raw_flags=base.termios.ICANON|base.termios.ISIG|base.termios.ECHO
+  c.wait(lambda:cli_profile_frame_complete(c.data[mark:],selected_label,color)
+         and [label for _row,selected,label in self.selector_options(c) if selected]==[selected_label]
+         and (base.termios.tcgetattr(c.master)[3]&raw_flags)==0)
  def choose(self,c,index=2):
-  c.wait(lambda:"起動するProfile" in c.text());self.assertEqual(len(self.requests),0)
+  self.wait_profile_frame(c,"Research");self.assertEqual(len(self.requests),0)
   c.send("\x1b[B"*index+"\r")
   c.wait(lambda:"profile:"+["Research","Specification","Development","Chore（雑務）","Other"][index] in c.text())
+ def test_guided_focus_layout(self):
+  self.install_many_profiles()
+  for rows,columns in ((24,80),(16,40),(12,24)):
+   with self.subTest(rows=rows,columns=columns):
+    c=self.child(rows=rows,columns=columns)
+    self.wait_profile_frame(c,"候補01")
+    self.assertEqual(self.requests,[])
+    screen=c.screen_text();self.assertIn("● 候補01",screen)
+    if columns==80:
+     self.assertIn(base.GUIDED_TITLE,screen);self.assertIn("Packages:",screen)
+     first_row=next(index for index,line in enumerate(c.screen.lines()) if "説明 01" in line)
+     mark=len(c.data);c.screen.reset_activity();c.send("\x1b[B");self.wait_profile_frame(c,"候補02",mark)
+     self.assertIn("説明 02",c.screen_text());self.assertIn("Other",c.screen_text())
+     second_row=next(index for index,line in enumerate(c.screen.lines()) if "説明 02" in line)
+     self.assertEqual(first_row,second_row)
+     self.assert_selector_frame(c,["候補01","候補02","候補03","候補04","候補05","同じ候補","同じ候補","候補08","候補09","候補10","候補11","Other"],"候補02")
+     self.assert_no_terminal_overflow(c)
+    if columns<40:self.assertFalse(any(icon in screen for icon in ("🧭","📐","💻","🧹")))
+    if columns==40:
+     mark=len(c.data);c.screen.reset_activity();c.send("\x1b[B"*6);self.wait_profile_frame(c,"同じ候補",mark)
+     self.assert_selector_frame(c,["候補01","候補02","候補03","候補04","候補05","同じ候補","同じ候補","候補08","候補09","候補10","候補11","Other"],"同じ候補")
+     self.assert_no_terminal_overflow(c)
+    if columns==24:
+     mark=len(c.data);c.screen.reset_activity();c.send("\x1b[B"*10);self.wait_profile_frame(c,"候補11",mark)
+     self.assertIn("11/12",c.screen_text())
+     self.assert_selector_frame(c,["候補04","候補05","同じ候補","同じ候補","候補08","候補09","候補10","候補11","Other"],"候補11")
+     self.assert_no_terminal_overflow(c)
+    self.save_screen(f"{columns}x{rows}",c);c.close()
+
+ def test_guided_focus_resize(self):
+  c=self.child(rows=24,columns=80);self.wait_profile_frame(c,"Research")
+  mark=len(c.data);c.send("\x1b[B\x1b[B");self.wait_profile_frame(c,"Development",mark)
+  wide_sentinel=base.GUIDED_TITLE;self.assertIn(wide_sentinel,c.screen_text())
+  self.assert_no_terminal_overflow(c)
+  mark=len(c.data);c.screen.reset_activity();c.resize(16,40);self.wait_profile_frame(c,"Development",mark)
+  self.assertIn("● Development 💻",c.screen_text())
+  self.assert_selector_frame(c,["Research","Specification","Development","Chore（雑務）","Other"],"Development")
+  self.assert_no_terminal_overflow(c);self.save_screen("40x16",c)
+  mark=len(c.data);c.screen.reset_activity();c.resize(12,24);self.wait_profile_frame(c,"Development",mark)
+  narrow=c.screen_text();self.assertNotIn("Research      🧭",narrow)
+  self.assertFalse(any(icon in narrow for icon in ("🧭","📐","💻","🧹")))
+  self.assertIn("Enter",narrow);self.assertIn("Other",narrow)
+  self.assertNotIn(wide_sentinel,narrow)
+  self.assert_selector_frame(c,["Research","Specification","Development","Chore（雑務）","Other"],"Development")
+  self.assert_no_terminal_overflow(c);self.save_screen("24x12",c)
+  mark=len(c.data);c.screen.reset_activity();c.resize(24,80);self.wait_profile_frame(c,"Development",mark)
+  self.assertIn(base.GUIDED_TITLE,c.screen_text())
+  self.assert_selector_frame(c,["Research","Specification","Development","Chore（雑務）","Other"],"Development")
+  self.assert_no_terminal_overflow(c);self.save_screen("80x24-restored",c)
+  c.send("\r");c.wait(lambda:"profile:Development" in c.text())
+  self.assertEqual(len(self.requests),0)
+
+ def test_guided_focus_no_color_and_icons_off(self):
+  self.env["NO_COLOR"]="1"
+  c=self.child(rows=24,columns=80);self.wait_profile_frame(c,"Research")
+  self.assertIsNone(base.re.search(rb"\x1b\[[0-9;]*m",c.data),repr(c.data[-1000:]))
+  self.assertIn("🧭",c.screen_text());self.save_screen("no-color",c)
+  c.send("\x1b");c.wait(lambda:"profile:Other" in c.text());c.close()
+  self.env.pop("NO_COLOR");self.env["PI_PROFILE_ICONS"]="0"
+  c=self.child(rows=24,columns=80);self.wait_profile_frame(c,"Research")
+  self.assertFalse(any(icon in c.screen_text() for icon in ("🧭","📐","💻","🧹")))
+  self.assertRegex(c.data,rb"\x1b\[[0-9;]*m");self.save_screen("icons-off",c)
+  c.send("\x1b");c.wait(lambda:"profile:Other" in c.text())
+
  def test_new_fixed_reload_and_new(self):
   c=self.child();self.choose(c);self.assert_persona(self.prompt(c),"開発")
   for command in ("/reload","/new"):
    mark=len(c.data);c.send(command+"\r")
    c.wait(lambda:"profile:Development" in c.text(mark) or "Reloaded" in c.text(mark) or "reloaded" in c.text(mark) or "New session started" in c.text(mark))
-   self.assertNotIn("起動するProfile",c.text(mark));self.assertNotIn("会話のprofileを選択",c.text(mark))
+   self.assert_no_selector_output(c.text(mark))
    self.assert_persona(self.prompt(c,"after "+command),"開発")
  def test_resume_continue_and_legacy(self):
   c=self.child();self.choose(c);self.prompt(c);path=self.session();c.close();self.children.remove(c)
@@ -33,7 +114,7 @@ class Launcher(base.Acceptance):
   self.run_mode("--session",str(path),"--print","resumed");self.assert_persona(self.requests[-1],"開発")
  def test_noninteractive_and_piped_stdin(self):
   for args in [("--print","print"),("--mode","json","json")]:
-   r=self.run_mode(*args);self.assert_persona(self.requests[-1],"標準");self.assertNotIn("起動するProfile",r.stdout)
+   r=self.run_mode(*args);self.assert_persona(self.requests[-1],"標準");self.assert_no_selector_output(r.stdout)
   r=self.run_mode("--print",input="PIPED_INPUT_MARKER");self.assertIn("PIPED_INPUT_MARKER",json.dumps(self.requests[-1]))
  def test_profile_package_isolation(self):
   pkg=self.home/"owned-package";pkg.mkdir();marker=self.home/"pkg-loaded"
@@ -59,16 +140,32 @@ class Launcher(base.Acceptance):
    finally:self.env["PI_CODING_AGENT_DIR"]=old
    for f,data in before.items():self.assertEqual((target/f).read_bytes(),data)
  def test_escape_cancel_resize(self):
-  c=self.child();c.wait(lambda:"起動するProfile" in c.text());c.send("\x1b");c.wait(lambda:"profile:Other" in c.text());self.assert_persona(self.prompt(c),"標準");c.close();self.children.remove(c)
-  c=self.child();c.wait(lambda:"起動するProfile" in c.text());c.send("\x03");c.wait(lambda:c.p.poll() is not None);self.assertEqual(len(self.requests),1)
+  c=self.child();self.wait_profile_frame(c,"Research");before=len(self.requests);c.send("\x1b");c.wait(lambda:"profile:Other" in c.text());self.assertEqual(len(self.requests),before);self.assertIn("◇ Profile  Other",c.text());self.assert_persona(self.prompt(c),"標準");c.close();self.children.remove(c)
+  sessions_before={p:p.read_bytes() for p in (self.agent/"sessions").rglob("*.jsonl")}
+  c=self.child();self.wait_profile_frame(c,"Research");before=len(self.requests);mark=len(c.data);c.send("\x03");c.wait(lambda:c.p.poll() is not None);self.assertEqual(c.p.returncode,130);self.assertEqual(len(self.requests),before);self.assertNotIn("◇ Profile",c.text(mark))
+  self.assertEqual({p:p.read_bytes() for p in (self.agent/"sessions").rglob("*.jsonl")},sessions_before)
+  raw_flags=base.termios.ICANON|base.termios.ISIG|base.termios.ECHO
+  self.assertEqual(base.termios.tcgetattr(c.master)[3]&raw_flags,raw_flags)
 
  def test_resize_and_sigterm(self):
-  import fcntl,termios,struct,signal
-  c=self.child();c.wait(lambda:'起動するProfile' in c.text())
-  fcntl.ioctl(c.master,termios.TIOCSWINSZ,struct.pack('HHHH',16,40,0,0));os.kill(c.p.pid,signal.SIGWINCH);c.pump(.1)
-  self.choose(c);self.assert_persona(self.prompt(c),'開発')
+  import signal
+  c=self.child();self.wait_profile_frame(c,"Research")
+  mark=len(c.data);c.resize(16,40);self.wait_profile_frame(c,"Research",mark)
+  self.choose(c);mark=len(c.data);self.assert_persona(self.prompt(c),'開発')
   os.kill(c.p.pid,signal.SIGTERM);c.wait(lambda:c.p.poll() is not None)
-  self.assertNotIn('会話のprofileを選択',c.text())
+  self.assert_no_selector_output(c.text(mark))
+ def test_shutdown_late_input(self):
+  import signal
+  c=self.child();self.wait_profile_frame(c,"Research");before=len(self.requests);mark=len(c.data)
+  os.killpg(c.p.pid,signal.SIGTERM);c.wait(lambda:c.p.poll() is not None)
+  exited=len(c.data)
+  try:os.write(c.master,b"\r")
+  except OSError:pass
+  c.pump(.1)
+  self.assertEqual(len(c.data),exited,"output appeared after the observed process-exit boundary")
+  self.assertNotIn("◇ Profile",c.text(mark));self.assertNotIn("profile:",c.text(mark))
+  self.assertEqual(len(self.requests),before);self.assertFalse(list((self.agent/"sessions").rglob("*.jsonl")))
+
  def test_fork_and_no_session(self):
   c=self.child();self.choose(c);self.prompt(c);path=self.session();c.close();self.children.remove(c)
   self.run_mode("--fork",str(path),"--print","forked");self.assert_persona(self.requests[-1],"開発")

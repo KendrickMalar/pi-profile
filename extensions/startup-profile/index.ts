@@ -11,6 +11,7 @@ import { commonSkillsFromCommands, loadProfileResources, resolveAgentSkillPaths 
 import { registerProfileAgents } from './subagent-registration.ts';
 import {readLaunchContext} from '../../src/launch-context.ts';
 import {attachLaunchBridge} from './launch-bridge.ts';
+import {chooseProfileInPi} from './selector-ui.ts';
 
 export default function startupProfile(pi: ExtensionAPI, profilesRoot?: string): void {
  const contextFile=process.env.PI_SUBAGENT_CHILD==='1'?undefined:process.env.PI_PROFILE_LAUNCH_CONTEXT;
@@ -59,12 +60,12 @@ export default function startupProfile(pi: ExtensionAPI, profilesRoot?: string):
   if(fixed){active=fixed;hasStoredProfile=true;if(!restored.snapshot)pi.appendEntry(STATE_ENTRY_TYPE,active);}
   else if(decision==="restore"){ active=restored.snapshot!; hasStoredProfile=true; }
   else if(decision==="select"){
-   const options=profiles.map(p=>"["+p.id+"] "+p.label+" — "+p.description);
-   controller=new AbortController();
-   const selected=await ctx.ui.select("会話のprofileを選択",options,{signal:controller.signal});
-   if(current!==generation || sessionId!==ctx.sessionManager.getSessionId() || controller?.signal.aborted) return;
-   const index=selected===undefined ? -1 : options.indexOf(selected);
-   active=snapshotProfile(index<0 ? STANDARD_PROFILE : profiles[index]);
+   const selectionController=new AbortController();
+   controller=selectionController;
+   const selected=await chooseProfileInPi(ctx,profiles,selectionController.signal,process.env.PI_PROFILE_ICONS!=="0");
+   if(current!==generation || sessionId!==ctx.sessionManager.getSessionId() || selectionController.signal.aborted) return;
+   const definition=selected===undefined ? undefined : profiles.find(profile=>profile.id===selected);
+   active=snapshotProfile(definition??STANDARD_PROFILE);
    pi.appendEntry(STATE_ENTRY_TYPE,active);
    hasStoredProfile=true;
    controller=undefined;

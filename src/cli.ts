@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import {readFileSync,existsSync,realpathSync} from 'node:fs';import {homedir} from 'node:os';import {dirname,join,resolve} from 'node:path';import {fileURLToPath,pathToFileURL} from 'node:url';
 import {loadPiHost,findPiExecutable,type PiHost} from './pi-host.ts';import {parseSessionIntent} from './session-intent.ts';import {resolveSessionTarget} from './session-target.ts';
-import {selectStartupProfile} from './select-profile.ts';import {resolveProfileRoot} from '../extensions/startup-profile/profile-root.ts';import {loadProfiles,STANDARD_PROFILE,type ProfileDefinition} from '../extensions/startup-profile/catalog.ts';
+import {selectStartupProfile} from './select-profile.ts';import {chooseProfileInCli} from './profile-selector-cli.ts';import {resolveProfileRoot} from '../extensions/startup-profile/profile-root.ts';import {loadProfiles,STANDARD_PROFILE,type ProfileDefinition} from '../extensions/startup-profile/catalog.ts';
 import {loadProfilePackages,changeProfilePackages,normalizeSource} from './package-declarations.ts';import {resolveProfilePackages,manageProfilePackages} from './package-resolver.ts';import {launchPi,spawnNativePi,startupExtension} from './launch.ts';
 import {acquireProfilePackages} from './package-worker-client.ts';
 const help='pi-profile launch [--profile ID] -- [Pi args...]\npi-profile packages <list|add|remove|install|update> --profile ID [SOURCE] [--replace]\n';
@@ -60,7 +60,7 @@ export async function runCli(argv:string[],env:NodeJS.ProcessEnv):Promise<number
    const result=await choose(items.map(i=>({id:i.id,label:i.title,description:i.profileId})),'再開する会話',host);return result.kind==='selected'?result.id:null;});
   const selected=await selectStartupProfile(target,p.definitions,options.profile,async(items)=>{
    if(intent.mode!=='tui')return{kind:'selected',id:'standard'};
-   return choose(items.map(i=>{const definition=p.definitions.find(p=>p.id===i.id);let names='';try{names=definition?.directory?loadProfilePackages(definition.directory).packages.join(', '):'';}catch{names='パッケージ宣言を確認してください';}return{id:i.id,label:i.label,description:i.description+(names?' / '+names:'')};}),'起動するProfile',host);});
+   return chooseProfileInCli(items.map(i=>{const definition=p.definitions.find(p=>p.id===i.id);try{return{...i,packages:definition?.directory?loadProfilePackages(definition.directory).packages:[]};}catch{return{...i,packages:undefined,packageWarning:'パッケージ宣言を確認してください'};}}),host,env);});
   if(!selected)return 130;
   const definition=p.definitions.find(p=>p.id===selected.id);if(!definition&&selected.id!=='standard')throw new Error('保存Profileの定義がありません。PI_PROFILE_LAUNCHER=0で従来起動するか定義を復旧してください');
   const declaration=definition?.directory?loadProfilePackages(definition.directory):{version:1 as const,packages:[]};
