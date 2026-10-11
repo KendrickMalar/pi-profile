@@ -6,6 +6,17 @@ ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location("profile_base",ROOT/"scripts/test-startup-profile-cli.py")
 base=importlib.util.module_from_spec(spec);spec.loader.exec_module(base)
 OPTIONS=None
+
+def cli_profile_frame_complete(data, selected_label, color):
+ # renderProfileSelector's last row ends at this final hint (and color reset).
+ ending="Ctrl-C 中止".encode()+(b"\x1b[22m" if color else b"")
+ if not data.endswith(ending):return False
+ text=base.ANSI.sub("",data.decode("utf8","replace"))
+ selected=text.rfind("● "+selected_label);footer=text.rfind("└  ")
+ # Soft wrapping can split a word or discard the space between hint words.
+ footer_text="".join(text[footer:].split())
+ return selected>=0 and footer>selected and all(hint in footer_text for hint in ("↑↓選択","Enter開始","EscOther","Ctrl-C中止"))
+
 class Launcher(base.Acceptance):
  def setUp(self):
   super().setUp();self.launch_options=[];self.discovery=False;self.model="profile-fixture/fixture"
@@ -16,8 +27,14 @@ class Launcher(base.Acceptance):
   if not self.discovery:args.append("--no-extensions")
   for extension in self.pre_extensions+self.extra_extensions:args+=["-e",str(extension)]
   return args+list(extra)
+ def wait_profile_frame(self,c,selected_label,mark=0):
+  color=not self.env.get("NO_COLOR") and self.env.get("TERM")!="dumb"
+  raw_flags=base.termios.ICANON|base.termios.ISIG|base.termios.ECHO
+  c.wait(lambda:cli_profile_frame_complete(c.data[mark:],selected_label,color)
+         and [label for _row,selected,label in self.selector_options(c) if selected]==[selected_label]
+         and (base.termios.tcgetattr(c.master)[3]&raw_flags)==0)
  def choose(self,c,index=2):
-  c.wait(lambda:base.GUIDED_TITLE in c.screen_text());self.assertEqual(len(self.requests),0)
+  self.wait_profile_frame(c,"Research");self.assertEqual(len(self.requests),0)
   c.send("\x1b[B"*index+"\r")
   c.wait(lambda:"profile:"+["Research","Specification","Development","Chore（雑務）","Other"][index] in c.text())
  def test_guided_focus_layout(self):
@@ -25,43 +42,48 @@ class Launcher(base.Acceptance):
   for rows,columns in ((24,80),(16,40),(12,24)):
    with self.subTest(rows=rows,columns=columns):
     c=self.child(rows=rows,columns=columns)
-    c.wait(lambda:"候補01" in c.screen_text() and "└" in c.screen_text())
+    self.wait_profile_frame(c,"候補01")
     self.assertEqual(self.requests,[])
     screen=c.screen_text();self.assertIn("● 候補01",screen)
     if columns==80:
      self.assertIn(base.GUIDED_TITLE,screen);self.assertIn("Packages:",screen)
      first_row=next(index for index,line in enumerate(c.screen.lines()) if "説明 01" in line)
-     c.screen.reset_activity();c.send("\x1b[B");c.wait(lambda:"説明 02" in c.screen_text() and "Other" in c.screen_text())
+     mark=len(c.data);c.screen.reset_activity();c.send("\x1b[B");self.wait_profile_frame(c,"候補02",mark)
+     self.assertIn("説明 02",c.screen_text());self.assertIn("Other",c.screen_text())
      second_row=next(index for index,line in enumerate(c.screen.lines()) if "説明 02" in line)
      self.assertEqual(first_row,second_row)
      self.assert_selector_frame(c,["候補01","候補02","候補03","候補04","候補05","同じ候補","同じ候補","候補08","候補09","候補10","候補11","Other"],"候補02")
      self.assert_no_terminal_overflow(c)
     if columns<40:self.assertFalse(any(icon in screen for icon in ("🧭","📐","💻","🧹")))
     if columns==40:
-     c.screen.reset_activity();c.send("\x1b[B"*6);c.wait(lambda:"● 同じ候補" in c.screen_text() and "候補01" in c.screen_text() and "Other" in c.screen_text())
+     mark=len(c.data);c.screen.reset_activity();c.send("\x1b[B"*6);self.wait_profile_frame(c,"同じ候補",mark)
      self.assert_selector_frame(c,["候補01","候補02","候補03","候補04","候補05","同じ候補","同じ候補","候補08","候補09","候補10","候補11","Other"],"同じ候補")
      self.assert_no_terminal_overflow(c)
     if columns==24:
-     c.screen.reset_activity();c.send("\x1b[B"*10);c.wait(lambda:"11/12" in c.screen_text() and "● 候補11" in c.screen_text() and "Other" in c.screen_text())
+     mark=len(c.data);c.screen.reset_activity();c.send("\x1b[B"*10);self.wait_profile_frame(c,"候補11",mark)
+     self.assertIn("11/12",c.screen_text())
      self.assert_selector_frame(c,["候補04","候補05","同じ候補","同じ候補","候補08","候補09","候補10","候補11","Other"],"候補11")
      self.assert_no_terminal_overflow(c)
     self.save_screen(f"{columns}x{rows}",c);c.close()
 
  def test_guided_focus_resize(self):
-  c=self.child(rows=24,columns=80);c.wait(lambda:base.GUIDED_TITLE in c.screen_text())
-  c.send("\x1b[B\x1b[B");c.wait(lambda:"● Development" in c.screen_text())
+  c=self.child(rows=24,columns=80);self.wait_profile_frame(c,"Research")
+  mark=len(c.data);c.send("\x1b[B\x1b[B");self.wait_profile_frame(c,"Development",mark)
   wide_sentinel=base.GUIDED_TITLE;self.assertIn(wide_sentinel,c.screen_text())
-  c.screen.reset_activity();c.resize(16,40);c.wait(lambda:"● Development 💻" in c.screen_text() and "└" in c.screen_text())
+  self.assert_no_terminal_overflow(c)
+  mark=len(c.data);c.screen.reset_activity();c.resize(16,40);self.wait_profile_frame(c,"Development",mark)
+  self.assertIn("● Development 💻",c.screen_text())
   self.assert_selector_frame(c,["Research","Specification","Development","Chore（雑務）","Other"],"Development")
   self.assert_no_terminal_overflow(c);self.save_screen("40x16",c)
-  c.screen.reset_activity();c.resize(12,24);c.wait(lambda:"● Development" in c.screen_text() and base.GUIDED_TITLE not in c.screen_text() and "└" in c.screen_text())
+  mark=len(c.data);c.screen.reset_activity();c.resize(12,24);self.wait_profile_frame(c,"Development",mark)
   narrow=c.screen_text();self.assertNotIn("Research      🧭",narrow)
   self.assertFalse(any(icon in narrow for icon in ("🧭","📐","💻","🧹")))
   self.assertIn("Enter",narrow);self.assertIn("Other",narrow)
   self.assertNotIn(wide_sentinel,narrow)
   self.assert_selector_frame(c,["Research","Specification","Development","Chore（雑務）","Other"],"Development")
   self.assert_no_terminal_overflow(c);self.save_screen("24x12",c)
-  c.screen.reset_activity();c.resize(24,80);c.wait(lambda:base.GUIDED_TITLE in c.screen_text() and "● Development" in c.screen_text() and "└" in c.screen_text())
+  mark=len(c.data);c.screen.reset_activity();c.resize(24,80);self.wait_profile_frame(c,"Development",mark)
+  self.assertIn(base.GUIDED_TITLE,c.screen_text())
   self.assert_selector_frame(c,["Research","Specification","Development","Chore（雑務）","Other"],"Development")
   self.assert_no_terminal_overflow(c);self.save_screen("80x24-restored",c)
   c.send("\r");c.wait(lambda:"profile:Development" in c.text())
@@ -69,12 +91,12 @@ class Launcher(base.Acceptance):
 
  def test_guided_focus_no_color_and_icons_off(self):
   self.env["NO_COLOR"]="1"
-  c=self.child(rows=24,columns=80);c.wait(lambda:base.GUIDED_TITLE in c.screen_text() and "└" in c.screen_text())
+  c=self.child(rows=24,columns=80);self.wait_profile_frame(c,"Research")
   self.assertIsNone(base.re.search(rb"\x1b\[[0-9;]*m",c.data),repr(c.data[-1000:]))
   self.assertIn("🧭",c.screen_text());self.save_screen("no-color",c)
   c.send("\x1b");c.wait(lambda:"profile:Other" in c.text());c.close()
   self.env.pop("NO_COLOR");self.env["PI_PROFILE_ICONS"]="0"
-  c=self.child(rows=24,columns=80);c.wait(lambda:base.GUIDED_TITLE in c.screen_text() and "└" in c.screen_text())
+  c=self.child(rows=24,columns=80);self.wait_profile_frame(c,"Research")
   self.assertFalse(any(icon in c.screen_text() for icon in ("🧭","📐","💻","🧹")))
   self.assertRegex(c.data,rb"\x1b\[[0-9;]*m");self.save_screen("icons-off",c)
   c.send("\x1b");c.wait(lambda:"profile:Other" in c.text())
@@ -118,19 +140,23 @@ class Launcher(base.Acceptance):
    finally:self.env["PI_CODING_AGENT_DIR"]=old
    for f,data in before.items():self.assertEqual((target/f).read_bytes(),data)
  def test_escape_cancel_resize(self):
-  c=self.child();c.wait(lambda:base.GUIDED_TITLE in c.screen_text());before=len(self.requests);c.send("\x1b");c.wait(lambda:"profile:Other" in c.text());self.assertEqual(len(self.requests),before);self.assertIn("◇ Profile  Other",c.text());self.assert_persona(self.prompt(c),"標準");c.close();self.children.remove(c)
-  c=self.child();c.wait(lambda:base.GUIDED_TITLE in c.screen_text());before=len(self.requests);mark=len(c.data);c.send("\x03");c.wait(lambda:c.p.poll() is not None);self.assertEqual(len(self.requests),before);self.assertNotIn("◇ Profile",c.text(mark))
+  c=self.child();self.wait_profile_frame(c,"Research");before=len(self.requests);c.send("\x1b");c.wait(lambda:"profile:Other" in c.text());self.assertEqual(len(self.requests),before);self.assertIn("◇ Profile  Other",c.text());self.assert_persona(self.prompt(c),"標準");c.close();self.children.remove(c)
+  sessions_before={p:p.read_bytes() for p in (self.agent/"sessions").rglob("*.jsonl")}
+  c=self.child();self.wait_profile_frame(c,"Research");before=len(self.requests);mark=len(c.data);c.send("\x03");c.wait(lambda:c.p.poll() is not None);self.assertEqual(c.p.returncode,130);self.assertEqual(len(self.requests),before);self.assertNotIn("◇ Profile",c.text(mark))
+  self.assertEqual({p:p.read_bytes() for p in (self.agent/"sessions").rglob("*.jsonl")},sessions_before)
+  raw_flags=base.termios.ICANON|base.termios.ISIG|base.termios.ECHO
+  self.assertEqual(base.termios.tcgetattr(c.master)[3]&raw_flags,raw_flags)
 
  def test_resize_and_sigterm(self):
   import signal
-  c=self.child();c.wait(lambda:base.GUIDED_TITLE in c.text())
-  c.resize(16,40);c.pump(.1)
+  c=self.child();self.wait_profile_frame(c,"Research")
+  mark=len(c.data);c.resize(16,40);self.wait_profile_frame(c,"Research",mark)
   self.choose(c);mark=len(c.data);self.assert_persona(self.prompt(c),'開発')
   os.kill(c.p.pid,signal.SIGTERM);c.wait(lambda:c.p.poll() is not None)
   self.assert_no_selector_output(c.text(mark))
  def test_shutdown_late_input(self):
   import signal
-  c=self.child();c.wait(lambda:base.GUIDED_TITLE in c.screen_text() and "└" in c.screen_text());before=len(self.requests);mark=len(c.data)
+  c=self.child();self.wait_profile_frame(c,"Research");before=len(self.requests);mark=len(c.data)
   os.killpg(c.p.pid,signal.SIGTERM);c.wait(lambda:c.p.poll() is not None)
   exited=len(c.data)
   try:os.write(c.master,b"\r")
