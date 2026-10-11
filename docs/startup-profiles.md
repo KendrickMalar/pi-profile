@@ -7,7 +7,9 @@
 
 専用宣言は個人Profile内のpackages.json、保存先は ~/.pi/profile-packages/<ID>/ です。未導入時の取得や依存解決、reloadの失敗扱いは標準Piに従い、--offlineは追加しません。認証用agentDirや共有settingsは切り替えません。詳細は [Profile package launcher](profile-package-launcher.md) を参照してください。稼働するpi-accountへの接続は別承認の導入作業です。
 
-新しい対話会話を開始すると、次の順に選べます。`/new` でも選び直せます。EscならOtherです。同じ会話の途中では変更しません。
+新しい対話会話を開始すると、Guided Focus画面で次の順に選べます。選択中は`●`で示し、説明は一覧下の固定領域に表示します。素の`pi`ではPiの現在のテーマと実効キーバインドを使い、`/new`でも選び直せます。Esc（既定ではCtrl-Cも同じ取消操作）ならOtherです。同じ会話の途中では変更しません。
+
+既知の4用途には補助アイコンを表示します。`PI_PROFILE_ICONS=0 pi`でアイコンだけを無効化できます。`NO_COLOR`は素の`pi`のテーマを置き換える設定ではなく、起動前ランチャーの色だけを抑制します。カスタム名や同名候補は改名せず、内部IDで区別します。狭い端末ではタイトル・アイコン・説明などの装飾を段階的に省き、長い表示を切り詰め、候補が多ければ選択中を含むviewportと位置を表示します。
 
 1. Research: 情報やデータを調べ、出典付きのMarkdown・比較表・一覧などにまとめる（`research.md`）。
 2. Specification: 要件・制約・受け入れ条件を整理し、仕様書にまとめる（`specification.md`）。
@@ -111,6 +113,6 @@ python3 scripts/test-startup-profile-cli.py --pi "$(command -v pi)" \
   --omp-extension /path/to/my-pi/extensions/omp-modes.ts
 ```
 
-CLI検証は架空のHOME・設定・認証とlocalhostの架空モデルを使用し、外部APIを呼びません。PTY記録とモデル要求はignoredの `.test-evidence/cli/` に保存します。`--without-extension --case startup_select` は選択画面がない場合を見逃さない負例で、失敗が正常です。PTY検証はmacOS/Linux向けです。
+CLI検証は架空のHOME・設定・認証とlocalhostの架空モデルを使用し、外部APIを呼びません。raw ANSI、cursor/eraseを反映した画面snapshot、モデル要求をignoredの `.test-evidence/cli/` に保存します。80x24・40x16・24x12、resize、明暗テーマ、キー再割当を合成端末で検証します。これは実フォントでの絵文字幅、物理端末の色、VoiceOver等の読み上げを検証したことにはなりません。`--without-extension --case startup_select` は選択画面がない場合を見逃さない負例で、失敗が正常です。PTY検証はmacOS/Linux向けです。
 
 導入は `pi install git:github.com/Papillon6814/pi-profile`。既存my-piのProfile実装と同時に有効化しないでください。元の登録を除外してから新パッケージを登録します。稼働設定への反映は隔離検証と承認後に行い、worktreeの検証だけでは既存環境を変更しません。

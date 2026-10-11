@@ -12,11 +12,13 @@ Choose a purpose when starting a new interactive conversation or using `/new`:
 
 The included instructions and selector text are Japanese. Each profile has its own folder, optional skills, and optional namespaced subagents.
 
+Interactive selection uses a Guided Focus screen: the selected row is marked with `●`, its description stays in a fixed area, and the footer shows the active keys. Built-in Profile IDs may show a small icon, but labels (including custom or duplicate labels) are preserved and selection is always tracked by ID. Set `PI_PROFILE_ICONS=0` to hide icons in both entrypoints. Narrow terminals shorten or remove decoration, truncate long display text, and use a viewport while keeping the selected item and key guidance visible.
+
 ## Optional startup launcher and Profile packages
 
 The package also provides a built JavaScript `pi-profile` CLI. It selects a Profile before normal Pi starts and resolves that Profile's npm/Git/local packages with Pi's standard behavior; it does not add offline or disable automatic acquisition. A launched process keeps its Profile across `/new`, and different-Profile sessions require a new process. Existing plain `pi` entrypoints keep their original selector.
 
-The new CLI supports npm-installed Pi 1.0.4 / Node 26.10.0+ on macOS/Linux. Account-launcher rollout and bin registration are separate explicit changes. See [Profile package launcher](docs/profile-package-launcher.md) for configuration, management, recovery and limits.
+The new CLI supports npm-installed Pi 1.0.4 / Node 26.10.0+ on macOS/Linux. Account-launcher rollout and bin registration are separate explicit changes. The pre-launch selector uses the terminal ANSI palette; non-empty `NO_COLOR` (or `TERM=dumb`) disables its color without disabling icons. Plain `pi` instead uses Pi's active theme and remapped selection keys. See [Profile package launcher](docs/profile-package-launcher.md) for configuration, management, recovery and limits.
 
 ## Install
 
@@ -111,9 +113,10 @@ npm test
 npm run typecheck
 python3 -m unittest discover -s scripts/tests -v
 python3 scripts/test-startup-profile-cli.py --pi "$(command -v pi)"
+python3 scripts/test-profile-launcher-cli.py --pi "$(command -v pi)" --launcher dist/src/cli.js
 ```
 
-CLI tests use disposable HOME/configuration, synthetic credentials, a loopback-only model, and PTYs. They do not use real accounts or an external model API. Evidence is written to ignored `.test-evidence/cli/`. The PTY harness supports macOS/Linux, not Windows.
+CLI tests use disposable HOME/configuration, synthetic credentials, a loopback-only model, and PTYs. They do not use real accounts or an external model API. Evidence is written to ignored `.test-evidence/cli/` and `.test-evidence/launcher/`, including raw ANSI and cursor/erase-aware screen snapshots for Guided Focus cases. The PTY harness covers 80x24, 40x16, and 24x12 synthetic terminals and supports macOS/Linux, not Windows. These automated snapshots do not prove font-specific emoji width, a physical terminal's light/dark appearance, or screen-reader behavior.
 
 The default run skips four optional integration cases: Plan/omp compatibility plus three real-subagent cases (base and both common-extension load orders). Pass the existing extension paths to run them; nothing is downloaded.
 

@@ -166,3 +166,22 @@ test("resize_keeps_selected_id", async () => {
   h.component?.handleInput?.("enter");
   assert.equal(await pending, "second");
 });
+
+test("reserves_pi_chrome_rows_for_many_options_and_keeps_footer", async () => {
+  const h = selectorHarness({ rows: 24 });
+  const items = Array.from({ length: 12 }, (_, index) => ({
+    id: `item-${index}`,
+    label: `Item ${index + 1}`,
+    description: `Description ${index + 1}`,
+  }));
+  const pending = chooseProfileInPi(h.ctx, items, new AbortController().signal, false);
+  const lines = h.component?.render(80) ?? [];
+  assert.ok(lines.length <= 21, `custom content used ${lines.length} rows`);
+  assert.match(lines.join("\n"), /└  .*選択.*開始.*Other/);
+  h.component?.handleInput?.("down");
+  assert.match(h.component?.render(24).join("\n") ?? "", /● Item 2/);
+  h.tui.terminal.rows = 1;
+  assert.ok((h.component?.render(24) ?? []).length <= 1);
+  h.component?.handleInput?.("enter");
+  assert.equal(await pending, "item-1");
+});

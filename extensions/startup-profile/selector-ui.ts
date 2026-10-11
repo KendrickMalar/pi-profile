@@ -16,6 +16,12 @@ import {
 
 const widthTools: SelectorWidth = { visibleWidth, truncateToWidth, wrapTextWithAnsi };
 
+// Pi 1.0.2's non-overlay custom UI replaces the editor, while the root layout still
+// reserves one separator row above it and two footer rows below it. TUI exposes the
+// terminal height but not the editor container's allocated height, so keep those rows
+// out of the shared selector layout (also verified against the host CLI PTY).
+const PI_CUSTOM_CHROME_ROWS = 3;
+
 function keyLabel(key: string): string {
   const known: Readonly<Record<string, string>> = {
     up: "↑",
@@ -132,7 +138,7 @@ class ProfileSelectorComponent {
       items: this.layoutItems,
       selectedId,
       width,
-      height: this.tui.terminal.rows,
+      height: Math.max(1, this.tui.terminal.rows - PI_CUSTOM_CHROME_ROWS),
       icons: this.icons,
       hints: [
         `${keysFor(this.keybindings, "tui.select.up")}/${keysFor(this.keybindings, "tui.select.down")} 選択`,

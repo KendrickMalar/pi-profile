@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real Pi acceptance tests: disposable HOME, loopback-only model, PTY evidence."""
 import argparse
+import codecs
 import hashlib
 import http.server
 import json
@@ -18,18 +19,131 @@ import termios
 import threading
 import time
 import unittest
+import unicodedata
 import fcntl
 
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = ROOT / ".test-evidence/cli"
 OPTIONS = None
 ANSI = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)|[()][A-Z0-9])")
+GUIDED_TITLE = "◆ 今日は何をしますか？"
+SHORT_GUIDED_TITLE = "◆ Profile"
+LEGACY_TITLES = ("会話のprofileを選択", "起動するProfile")
+
+
+def cell_width(char):
+    if unicodedata.combining(char) or char in ("\ufe0e", "\ufe0f", "\u200d"):
+        return 0
+    return 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+
+
+class TerminalScreen:
+    """Small VT screen model for selector assertions; applies cursor movement and erasure."""
+    def __init__(self, rows, columns):
+        self.decoder = codecs.getincrementaldecoder("utf8")("replace")
+        self.rows = max(1, rows); self.columns = max(1, columns)
+        self.cells = [[" "] * self.columns for _ in range(self.rows)]
+        self.row = 0; self.column = 0; self.mode = "text"; self.sequence = ""
+
+    def resize(self, rows, columns):
+        rows=max(1,rows);columns=max(1,columns)
+        next_cells=[[" "]*columns for _ in range(rows)]
+        for y in range(min(rows,self.rows)):
+            for x in range(min(columns,self.columns)):
+                next_cells[y][x]=self.cells[y][x]
+        self.rows=rows;self.columns=columns;self.cells=next_cells
+        self.row=min(self.row,rows-1);self.column=min(self.column,columns-1)
+
+    def feed(self, data):
+        for char in self.decoder.decode(data):
+            if self.mode == "text":
+                if char == "\x1b": self.mode="escape";self.sequence=""
+                elif char == "\r": self.column=0
+                elif char in ("\n", "\x0b", "\x0c"): self._linefeed()
+                elif char == "\b": self.column=max(0,self.column-1)
+                elif char == "\t": self.column=min(self.columns-1,((self.column//8)+1)*8)
+                elif ord(char) >= 32 and char != "\x7f": self._put(char)
+            elif self.mode == "escape":
+                if char == "[": self.mode="csi";self.sequence=""
+                elif char == "]": self.mode="osc";self.sequence=""
+                elif char in "()#": self.mode="escape-one"
+                elif char == "7": self.mode="text"
+                elif char == "8": self.mode="text"
+                else: self.mode="text"
+            elif self.mode == "escape-one":
+                self.mode="text"
+            elif self.mode == "osc":
+                if char == "\x07": self.mode="text"
+                elif char == "\x1b": self.mode="osc-escape"
+            elif self.mode == "osc-escape":
+                self.mode="text" if char == "\\" else "osc"
+            elif self.mode == "csi":
+                self.sequence += char
+                if "@" <= char <= "~":
+                    self._csi(self.sequence);self.mode="text";self.sequence=""
+
+    def _linefeed(self):
+        if self.row == self.rows - 1:
+            self.cells.pop(0);self.cells.append([" "]*self.columns)
+        else:self.row += 1
+
+    def _put(self, char):
+        width=cell_width(char)
+        if width == 0:
+            if self.column > 0:self.cells[self.row][self.column-1] += char
+            return
+        if self.column >= self.columns:self.column=0;self._linefeed()
+        if width == 2 and self.column == self.columns-1:self.column=0;self._linefeed()
+        self.cells[self.row][self.column]=char
+        if width == 2 and self.column+1 < self.columns:self.cells[self.row][self.column+1]=""
+        self.column += width
+
+    def _csi(self, sequence):
+        final=sequence[-1];raw=sequence[:-1]
+        private=raw.startswith("?")
+        if private:raw=raw[1:]
+        values=[]
+        for value in raw.split(";") if raw else []:
+            try:values.append(int(value) if value else 0)
+            except ValueError:values.append(0)
+        amount=(values[0] if values and values[0] else 1)
+        if final == "A":self.row=max(0,self.row-amount)
+        elif final == "B":self.row=min(self.rows-1,self.row+amount)
+        elif final == "C":self.column=min(self.columns-1,self.column+amount)
+        elif final == "D":self.column=max(0,self.column-amount)
+        elif final == "E":self.row=min(self.rows-1,self.row+amount);self.column=0
+        elif final == "F":self.row=max(0,self.row-amount);self.column=0
+        elif final == "G":self.column=min(self.columns-1,max(0,amount-1))
+        elif final in ("H","f"):
+            self.row=min(self.rows-1,max(0,(values[0] if values and values[0] else 1)-1))
+            self.column=min(self.columns-1,max(0,(values[1] if len(values)>1 and values[1] else 1)-1))
+        elif final == "J":
+            mode=values[0] if values else 0
+            if mode in (2,3):self.cells=[[" "]*self.columns for _ in range(self.rows)]
+            elif mode == 0:
+                self.cells[self.row][self.column:]=[" "]*(self.columns-self.column)
+                for row in range(self.row+1,self.rows):self.cells[row]=[" "]*self.columns
+            elif mode == 1:
+                for row in range(self.row):self.cells[row]=[" "]*self.columns
+                self.cells[self.row][:self.column+1]=[" "]*(self.column+1)
+        elif final == "K":
+            mode=values[0] if values else 0
+            if mode == 0:self.cells[self.row][self.column:]=[" "]*(self.columns-self.column)
+            elif mode == 1:self.cells[self.row][:self.column+1]=[" "]*(self.column+1)
+            elif mode == 2:self.cells[self.row]=[" "]*self.columns
+
+    def lines(self):
+        return ["".join(row).rstrip() for row in self.cells]
+
+    def text(self):
+        return "\n".join(self.lines())
 
 class Child:
-    def __init__(self, args, env, cwd):
+    def __init__(self, args, env, cwd, rows=42, columns=120):
         self.master, slave = pty.openpty()
         os.set_blocking(self.master, False)
-        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 42, 120, 0, 0))
+        self.rows=rows; self.columns=columns; self.screen=TerminalScreen(rows,columns)
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
         self.p = subprocess.Popen(args, stdin=slave, stdout=slave, stderr=slave,
                                   env=env, cwd=cwd, start_new_session=True)
         os.close(slave)
@@ -40,12 +154,21 @@ class Child:
             try:
                 b = os.read(self.master, 65536)
                 self.data += b
+                self.screen.feed(b)
                 # Answer terminal queries using fixture values only.
                 if b"\x1b[6n" in b: self.send(b"\x1b[1;1R")
                 if b"\x1b[c" in b: self.send(b"\x1b[?1;2c")
             except OSError: pass
     def text(self, mark=0):
         return ANSI.sub("", self.data[mark:].decode("utf8", "replace"))
+    def screen_text(self):
+        return self.screen.text()
+    def screen_contains(self, text):
+        return any(text in line for line in self.screen.lines())
+    def resize(self, rows, columns):
+        self.rows=rows;self.columns=columns;self.screen.resize(rows,columns)
+        fcntl.ioctl(self.master,termios.TIOCSWINSZ,struct.pack("HHHH",rows,columns,0,0))
+        os.kill(self.p.pid,signal.SIGWINCH)
     def wait(self, predicate, timeout=12):
         end = time.monotonic() + timeout
         while time.monotonic() < end:
@@ -157,6 +280,8 @@ class Acceptance(unittest.TestCase):
         name=self.id().split(".")[-1]
         for i,c in enumerate(self.children):
             c.close(); (ARTIFACTS/f"{name}-{i}.pty.txt").write_text(c.text())
+            (ARTIFACTS/f"{name}-{i}.pty.raw").write_bytes(c.data)
+            (ARTIFACTS/f"{name}-{i}.screen.txt").write_text(c.screen_text())
         (ARTIFACTS/f"{name}-requests.json").write_text(json.dumps(self.requests,ensure_ascii=False,indent=2))
         for n,data in self.unchanged.items():
             if n == "settings.json":
@@ -165,6 +290,30 @@ class Acceptance(unittest.TestCase):
                 self.assertEqual((self.agent/n).read_bytes(),data,n+" mutated")
         self.server.shutdown();self.server.server_close();self.thread.join()
         self.tmp.cleanup()
+    def assert_no_selector_output(self, text):
+        for title in (GUIDED_TITLE, SHORT_GUIDED_TITLE, *LEGACY_TITLES):
+            self.assertNotIn(title, text)
+    def save_screen(self, label, child):
+        ARTIFACTS.mkdir(parents=True, exist_ok=True)
+        (ARTIFACTS/f"{self.id().split('.')[-1]}-{label}.screen.txt").write_text(child.screen_text())
+        (ARTIFACTS/f"{self.id().split('.')[-1]}-{label}.raw").write_bytes(child.data)
+    def install_many_profiles(self, count=12):
+        self.legacy_only()
+        catalog=[]
+        ids=["research","specification","developer","chore"]+[f"fixture-{i}" for i in range(count-5)]+["standard"]
+        for index, profile_id in enumerate(ids):
+            label="同じ候補" if index in (5,6) else ("Other" if profile_id=="standard" else f"候補{index+1:02d}")
+            item={"id":profile_id,"label":label,"description":f"説明 {index+1:02d} 固定位置の確認", "order":index}
+            if profile_id != "standard":
+                filename=f"{profile_id}.md"; (self.profiles/filename).write_text(f"PROFILE_{index+1:02d}")
+                item["instructionsFile"]=filename
+            catalog.append(item)
+        (self.profiles/"catalog.json").write_text(json.dumps(catalog,ensure_ascii=False))
+        return catalog
+    def assert_screen_fits(self, child, rows, columns):
+        lines=child.screen.lines()
+        self.assertEqual(len(lines),rows)
+        self.assertTrue(all(sum(cell_width(char) for char in line)<=columns for line in lines),child.screen_text())
     def args(self,*extra):
         args=[OPTIONS.pi,"--offline","--no-extensions","--no-skills","--no-prompt-templates",
               "--model","profile-fixture/fixture"]
@@ -175,10 +324,10 @@ class Acceptance(unittest.TestCase):
         for extension in self.extra_extensions:
             args += ['--extension', str(extension)]
         return args+list(extra)
-    def child(self,*extra):
-        c=Child(self.args(*extra),self.env,self.cwd);self.children.append(c);return c
+    def child(self,*extra,rows=42,columns=120):
+        c=Child(self.args(*extra),self.env,self.cwd,rows,columns);self.children.append(c);return c
     def choose(self,c,index=2):
-        c.wait(lambda:"会話のprofileを選択" in c.text())
+        c.wait(lambda:GUIDED_TITLE in c.text())
         self.assertEqual(len(self.requests),0)
         c.send("\x1b[B"*index+"\r")
         labels=["Research","Specification","Development","Chore（雑務）","Other"]
@@ -220,7 +369,7 @@ class Acceptance(unittest.TestCase):
     def test_research(self):
         c=self.child();self.choose(c,0);self.assert_persona(self.prompt(c),"調査")
     def test_cancel_no_session_file(self):
-        c=self.child();c.wait(lambda:"会話のprofileを選択" in c.text());c.send("\x1b")
+        c=self.child();c.wait(lambda:GUIDED_TITLE in c.text());c.send("\x1b")
         c.wait(lambda:"profile:Other" in c.text())
         self.assertFalse(list((self.agent/"sessions").rglob("*.jsonl")))
         self.assert_persona(self.prompt(c),"標準")
@@ -262,10 +411,10 @@ class Acceptance(unittest.TestCase):
         c=self.child();self.choose(c);self.prompt(c)
         mark=len(c.data);c.send("/reload\r")
         c.wait(lambda:"Reloaded" in c.text(mark) or "reloaded" in c.text(mark))
-        self.assertNotIn("会話のprofileを選択",c.text(mark))
+        self.assert_no_selector_output(c.text(mark))
         self.assert_persona(self.prompt(c,"after reload"),"開発")
         mark=len(c.data);c.send("/new\r")
-        c.wait(lambda:"会話のprofileを選択" in c.text(mark))
+        c.wait(lambda:GUIDED_TITLE in c.text(mark))
         c.send("\x1b");c.wait(lambda:"profile:Other" in c.text(mark))
         self.assert_persona(self.prompt(c,"after new"),"標準")
     def test_fork_and_legacy(self):
@@ -288,7 +437,7 @@ class Acceptance(unittest.TestCase):
     def test_clone_keeps_profile_without_selector(self):
         c=self.child();self.choose(c,0);self.prompt(c)
         mark=len(c.data);c.send("/clone\r");c.wait(lambda:"Cloned to new session" in c.text(mark))
-        self.assertNotIn("会話のprofileを選択",c.text(mark))
+        self.assert_no_selector_output(c.text(mark))
         self.assert_persona(self.prompt(c,"after clone"),"調査")
 
     def test_tree_and_compaction_keep_profile(self):
@@ -318,7 +467,7 @@ class Acceptance(unittest.TestCase):
         self.assertNotIn("write",names)
         mark=len(c.data);c.send("/reload\r")
         c.wait(lambda:"Reloaded" in c.text(mark) or "reloaded" in c.text(mark))
-        self.assertNotIn("会話のprofileを選択",c.text(mark))
+        self.assert_no_selector_output(c.text(mark))
         body=self.prompt(c,"plan after reload");self.assert_persona(body,"開発")
         self.assertIn("[PLAN MODE ACTIVE]",json.dumps(body,ensure_ascii=False))
         self.assertNotIn("write",[t["function"]["name"] for t in body.get("tools",[])])
@@ -342,7 +491,7 @@ class Acceptance(unittest.TestCase):
         self.assertIn("[PLAN MODE ACTIVE]",json.dumps(body,ensure_ascii=False))
         mark=len(c.data); c.send("/reload\r")
         c.wait(lambda:"Reloaded" in c.text(mark) or "reloaded" in c.text(mark))
-        self.assertNotIn("会話のprofileを選択",c.text(mark))
+        self.assert_no_selector_output(c.text(mark))
         # omp resets its mode on reload; explicitly re-enable before checking it.
         mark=len(c.data); c.send("/vibe on\r")
         c.wait(lambda:"vibe mode ON" in c.text(mark))
@@ -366,7 +515,7 @@ class Acceptance(unittest.TestCase):
         self.choose(c);self.prompt(c)
         self.preprofile_tree(c)
         mark=len(c.data);c.send("/clone\r");c.wait(lambda:"Cloned to new session" in c.text(mark))
-        self.assertNotIn("会話のprofileを選択",c.text(mark))
+        self.assert_no_selector_output(c.text(mark))
         self.assert_persona(self.prompt(c,"after preprofile clone"),"開発")
 
     def test_preprofile_tree_send_then_fork(self):
@@ -395,7 +544,7 @@ class Acceptance(unittest.TestCase):
             {"id":"standard","label":"標準","description":"標準"},
             {"id":"alpha","label":"同じ","description":"説明","instructionsFile":"a.md"},
             {"id":"beta","label":"同じ","description":"説明","instructionsFile":"b.md"}]))
-        c=self.child();c.wait(lambda:"会話のprofileを選択" in c.text())
+        c=self.child();c.wait(lambda:GUIDED_TITLE in c.text())
         c.send("\x1b[B\x1b[B\r");c.wait(lambda:"profile:同じ" in c.text())
         body=json.dumps(self.prompt(c),ensure_ascii=False)
         self.assertIn("B_ONLY_PERSONA",body);self.assertNotIn("A_ONLY_PERSONA",body)
@@ -426,7 +575,7 @@ class Acceptance(unittest.TestCase):
     def test_invalid_catalog_falls_back(self):
         self.legacy_only()
         (self.profiles/"catalog.json").write_text("{not valid json")
-        c=self.child(); c.wait(lambda:"会話のprofileを選択" in c.text())
+        c=self.child(); c.wait(lambda:GUIDED_TITLE in c.text())
         c.send("\r"); c.wait(lambda:"profile:Other" in c.text())
         self.assert_persona(self.prompt(c),"標準")
 
@@ -441,9 +590,80 @@ class Acceptance(unittest.TestCase):
         self.run_mode("--session",str(path),"--print","invalid fixture")
         self.assert_persona(self.requests[-1],"標準")
 
+    def test_guided_focus_layout(self):
+        self.install_many_profiles()
+        for rows,columns in ((24,80),(16,40),(12,24)):
+            with self.subTest(rows=rows,columns=columns):
+                c=self.child(rows=rows,columns=columns)
+                c.wait(lambda:"候補01" in c.screen_text() and "└" in c.screen_text())
+                self.assertEqual(self.requests,[])
+                self.assert_screen_fits(c,rows,columns)
+                screen=c.screen_text()
+                self.assertIn("● 候補01",screen)
+                if columns == 80:
+                    first_row=next(index for index,line in enumerate(c.screen.lines()) if "説明 01" in line)
+                    c.send("\x1b[B");c.wait(lambda:"説明 02" in c.screen_text())
+                    second_row=next(index for index,line in enumerate(c.screen.lines()) if "説明 02" in line)
+                    self.assertEqual(first_row,second_row)
+                if columns < 40:self.assertFalse(any(icon in screen for icon in ("🧭","📐","💻","🧹")))
+                if columns == 40:
+                    c.send("\x1b[B"*6)
+                    c.wait(lambda:"● 同じ候補" in c.screen_text())
+                    self.assert_screen_fits(c,rows,columns)
+                if columns == 24:
+                    c.send("\x1b[B"*10)
+                    c.wait(lambda:"11/12" in c.screen_text() and "● 候補11" in c.screen_text())
+                    self.assert_screen_fits(c,rows,columns)
+                self.save_screen(f"{columns}x{rows}",c)
+                c.close()
+
+    def test_guided_focus_resize(self):
+        c=self.child(rows=24,columns=80)
+        c.wait(lambda:GUIDED_TITLE in c.screen_text() and "└" in c.screen_text())
+        c.send("\x1b[B\x1b[B")
+        c.wait(lambda:"● Development" in c.screen_text())
+        c.resize(16,40)
+        c.wait(lambda:"● Development 💻" in c.screen_text() and "└" in c.screen_text())
+        self.assert_screen_fits(c,16,40);self.save_screen("40x16",c)
+        c.resize(12,24)
+        c.wait(lambda:"● Development" in c.screen_text() and GUIDED_TITLE not in c.screen_text() and "└" in c.screen_text())
+        narrow=c.screen_text()
+        self.assertNotIn("Research      🧭",narrow)
+        self.assertFalse(any(icon in narrow for icon in ("🧭","📐","💻","🧹")))
+        self.assertIn("Enter",narrow);self.assertIn("Other",narrow)
+        self.assert_screen_fits(c,12,24);self.save_screen("24x12",c)
+        c.resize(24,80)
+        c.wait(lambda:GUIDED_TITLE in c.screen_text() and "● Development" in c.screen_text() and "└" in c.screen_text())
+        self.assert_screen_fits(c,24,80);self.save_screen("80x24-restored",c)
+        c.send("\r");c.wait(lambda:"profile:Development" in c.text())
+
+    def test_guided_focus_keybindings_icons_and_themes(self):
+        (self.agent/"keybindings.json").write_text(json.dumps({
+            "tui.select.up":"ctrl+p","tui.select.down":"ctrl+n",
+            "tui.select.confirm":"ctrl+y","tui.select.cancel":"ctrl+g"}))
+        for theme in ("dark","light"):
+            with self.subTest(theme=theme):
+                c=self.child("--use-theme",theme,rows=24,columns=80)
+                c.wait(lambda:"Ctrl+P/Ctrl+N 選択" in c.screen_text())
+                self.assertIn(b"\x1b[",c.data)
+                self.save_screen(theme,c)
+                c.send("\x07");c.wait(lambda:"profile:Other" in c.text());c.close()
+        self.env["PI_PROFILE_ICONS"]="0"
+        c=self.child(rows=24,columns=80);c.wait(lambda:GUIDED_TITLE in c.screen_text() and "└" in c.screen_text())
+        self.assertFalse(any(icon in c.screen_text() for icon in ("🧭","📐","💻","🧹")))
+        c.send("\x0e\x0e")
+        c.wait(lambda:"● Development" in c.screen_text())
+        c.send("\x19");c.wait(lambda:"profile:Development" in c.text())
+
     def test_shutdown_during_selection(self):
-        c=self.child(); c.wait(lambda:"会話のprofileを選択" in c.text())
-        c.close()
+        c=self.child(); c.wait(lambda:GUIDED_TITLE in c.screen_text() and "└" in c.screen_text())
+        mark=len(c.data);os.killpg(c.p.pid,signal.SIGTERM)
+        c.wait(lambda:c.p.poll() is not None or GUIDED_TITLE not in c.screen_text())
+        if c.p.poll() is None:
+            try:os.write(c.master,b"\r")
+            except OSError:pass
+        c.wait(lambda:c.p.poll() is not None)
+        self.assertNotIn("profile:",c.text(mark))
         self.assertEqual(self.requests,[])
         self.assertFalse(list((self.agent/"sessions").rglob("*.jsonl")))
 
@@ -463,7 +683,7 @@ class Acceptance(unittest.TestCase):
         self.assertIn('RESEARCH_SKILL_BODY',json.dumps(body))
         self.assertIn('<skill',json.dumps(body))
         path=self.session()
-        mark=len(c.data);c.send('/new\r');c.wait(lambda:'会話のprofileを選択' in c.text(mark))
+        mark=len(c.data);c.send('/new\r');c.wait(lambda:GUIDED_TITLE in c.text(mark))
         c.send('\x1b[B\x1b[B\r');c.wait(lambda:'profile:Development' in c.text(mark))
         body=self.prompt(c,'/skill:profile-check')
         self.assertIn('DEVELOPMENT_SKILL_BODY',json.dumps(body))
@@ -543,11 +763,11 @@ class Acceptance(unittest.TestCase):
                 self.assertNotIn('DEVELOPMENT_SKILL_BODY',text)
         mark=len(c.data);c.send('/new\r')
         if fixed_profile:
-            c.wait(lambda:'New session started' in c.text(mark)); self.assertNotIn('会話のprofileを選択',c.text(mark))
+            c.wait(lambda:'New session started' in c.text(mark)); self.assert_no_selector_output(c.text(mark))
             body=json.dumps(self.prompt(c,'catalog after new')); self.assertIn('profile.research.helper',body); self.assertNotIn('profile.developer.helper',body)
             profile_id='research'; removed_marker='RESEARCH_SKILL_BODY'
         else:
-            c.wait(lambda:'会話のprofileを選択' in c.text(mark))
+            c.wait(lambda:GUIDED_TITLE in c.text(mark))
             c.send('\x1b[B\x1b[B\r');c.wait(lambda:'profile:Development' in c.text(mark))
             body=json.dumps(self.prompt(c,'catalog after new'));self.assertIn('profile.developer.helper',body);self.assertNotIn('profile.research.helper',body)
             profile_id='development'; removed_marker='DEVELOPMENT_SKILL_BODY'
@@ -598,7 +818,7 @@ class Acceptance(unittest.TestCase):
         self.run_mode('--fork',str(path),'--print','fork separated fixture')
         self.assertIn('UPDATED_HOME_SKILL',json.dumps(self.requests[-1]))
         metadata=self.profiles/'research/profile.json';data=json.loads(metadata.read_text());data['enabled']=False;metadata.write_text(json.dumps(data))
-        c=self.child();c.wait(lambda:'会話のprofileを選択' in c.text())
+        c=self.child();c.wait(lambda:GUIDED_TITLE in c.text())
         self.assertNotIn('[research] Research',c.text())
         c.send('\x1b');c.wait(lambda:'profile:Other' in c.text())
         system=json.dumps([m for m in self.prompt(c,'removed personal')['messages'] if m['role']=='system'])
@@ -611,14 +831,14 @@ class Acceptance(unittest.TestCase):
         (explicit/'research/instructions.md').write_text('# 調査profile\nEXPLICIT_ROOT_RULE')
         for override in [str(explicit),'~/custom','~//custom','~///custom']:
             self.env['PI_PROFILE_DIR']=override
-            c=self.child();c.wait(lambda:'会話のprofileを選択' in c.text())
+            c=self.child();c.wait(lambda:GUIDED_TITLE in c.text())
             before=len(self.requests);c.send('\r');c.wait(lambda:'profile:Research' in c.text())
             self.assertEqual(len(self.requests),before)
             body=self.prompt(c,'explicit root')
             self.assertIn('EXPLICIT_ROOT_RULE',json.dumps(body))
             self.assertNotIn('DEFAULT_HOME_RULE',json.dumps(body));c.close()
         self.env['PI_PROFILE_DIR']='relative/profiles'
-        c=self.child();c.wait(lambda:'会話のprofileを選択' in c.text())
+        c=self.child();c.wait(lambda:GUIDED_TITLE in c.text())
         c.send('\r');c.wait(lambda:'profile:Other' in c.text())
         system=json.dumps([m for m in self.prompt(c,'invalid root')['messages'] if m['role']=='system'])
         self.assertNotIn('EXPLICIT_ROOT_RULE',system);self.assertNotIn('DEFAULT_HOME_RULE',system)
@@ -631,7 +851,7 @@ class Acceptance(unittest.TestCase):
         os.chmod(self.profiles,0o111)
         try:
             self.assertIn('Legacy',(self.profiles/'catalog.json').read_text())
-            c=self.child();c.wait(lambda:'会話のprofileを選択' in c.text())
+            c=self.child();c.wait(lambda:GUIDED_TITLE in c.text())
             c.send('\r');c.wait(lambda:'profile:Other' in c.text())
             body=self.prompt(c,'unreadable root fixture')
             system=json.dumps([m for m in body['messages'] if m['role']=='system'])
