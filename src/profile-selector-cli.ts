@@ -80,7 +80,7 @@ export function createCliProfileChooser(input: CliProfileChooserInput): Promise<
   const theme = cliTheme(color);
   const originalRawMode = Boolean(io.stdin.isRaw);
   let selectedIndex = 0;
-  let renderedRows = 0;
+  let renderedLines: string[] = [];
   let buffer = "";
   let escapeTimer: ReturnType<typeof setTimeout> | undefined;
   let finished = false;
@@ -91,12 +91,18 @@ export function createCliProfileChooser(input: CliProfileChooserInput): Promise<
       clearTimeout(escapeTimer);
       escapeTimer = undefined;
     };
+    const occupiedRows = (lines: readonly string[], width: number) => lines.reduce(
+      (count, line) => count + Math.max(1, Math.ceil(widthTools.visibleWidth(line) / width)),
+      0,
+    );
     const clearRenderedRows = () => {
-      if (renderedRows === 0) return;
-      io.stdout.write(`\x1b[${renderedRows}A\r`);
-      for (let index = 0; index < renderedRows; index++) io.stdout.write("\x1b[2K\n");
-      io.stdout.write(`\x1b[${renderedRows}A\r`);
-      renderedRows = 0;
+      const width = Math.max(1, io.stdout.columns ?? 80);
+      const rows = occupiedRows(renderedLines, width);
+      if (rows === 0) return;
+      io.stdout.write(`\x1b[${rows}A\r`);
+      for (let index = 0; index < rows; index++) io.stdout.write("\x1b[2K\n");
+      io.stdout.write(`\x1b[${rows}A\r`);
+      renderedLines = [];
     };
     const cleanup = () => {
       clearEscapeTimer();
@@ -146,15 +152,16 @@ export function createCliProfileChooser(input: CliProfileChooserInput): Promise<
         theme,
         widthTools,
       });
-      const oldRows = renderedRows;
+      const oldRows = occupiedRows(renderedLines, width);
+      const newRows = occupiedRows(layout.lines, width);
       if (oldRows > 0) io.stdout.write(`\x1b[${oldRows}A\r`);
       for (const line of layout.lines) io.stdout.write(`\x1b[2K${line}\n`);
-      if (oldRows > layout.lines.length) {
-        const staleRows = oldRows - layout.lines.length;
+      if (oldRows > newRows) {
+        const staleRows = oldRows - newRows;
         for (let index = 0; index < staleRows; index++) io.stdout.write("\x1b[2K\n");
         io.stdout.write(`\x1b[${staleRows}A`);
       }
-      renderedRows = layout.lines.length;
+      renderedLines = [...layout.lines];
     };
     const safelyRender = () => {
       try { render(); }
