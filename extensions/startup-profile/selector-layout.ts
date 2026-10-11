@@ -85,7 +85,7 @@ function wrappedContent(text: string, width: number, lines: number, widthTools: 
 }
 
 export function profileIcon(id: string, enabled: boolean): string | undefined {
-  return enabled ? PROFILE_ICONS[id] : undefined;
+  return enabled && Object.hasOwn(PROFILE_ICONS, id) ? PROFILE_ICONS[id] : undefined;
 }
 
 function itemDisplay(
@@ -251,7 +251,10 @@ export function renderProfileSelection(
   widthTools: SelectorWidth,
 ): string {
   const normalizedWidth = terminalSize(width);
+  const label = displayText(item.label);
+  const withoutIcon = `◇ Profile  ${label}`;
   const icon = profileIcon(item.id, icons && normalizedWidth >= 40);
-  const text = `◇ Profile  ${displayText(item.label)}${icon ? ` ${icon}` : ""}`;
+  const withIcon = icon ? `${withoutIcon} ${icon}` : withoutIcon;
+  const text = widthTools.visibleWidth(withIcon) <= normalizedWidth ? withIcon : withoutIcon;
   return fit(theme.accent(text), normalizedWidth, widthTools);
 }

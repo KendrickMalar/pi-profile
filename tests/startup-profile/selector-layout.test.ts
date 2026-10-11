@@ -138,3 +138,24 @@ test("display_controls_are_removed_without_mutating_input", () => {
   assert.ok(output.includes("pkg-name") || output.includes("warnbold"));
   assert.doesNotMatch(output, /\x1b|\x00|\x07|\r|\t|\[31m|\[2J|\[1m/);
 });
+
+test("prototype-like_unknown_id_has_no_icon", () => {
+  const item = { id: "constructor", label: "Constructor profile", description: "custom" };
+  assert.equal(profileIcon(item.id, true), undefined);
+
+  const result = renderProfileSelector({
+    items: [item], selectedId: item.id, width: 120, height: 24, icons: true,
+    hints: ["Enter 開始"], theme, widthTools,
+  });
+  assert.equal(result.lines[result.selectedRow], "│  ● Constructor profile");
+});
+
+test("selection_omits_icon_before_truncating_fitting_label", () => {
+  const item = {
+    id: "developer",
+    label: "abcdefghijklmnopqrstuvwxyzABC",
+    description: "custom",
+  };
+  assert.equal(visibleWidth(`◇ Profile  ${item.label}`), 40);
+  assert.equal(renderProfileSelection(item, 40, true, theme, widthTools), `◇ Profile  ${item.label}`);
+});
