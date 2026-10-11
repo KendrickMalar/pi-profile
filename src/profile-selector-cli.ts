@@ -97,11 +97,17 @@ export function createCliProfileChooser(input: CliProfileChooserInput): Promise<
     );
     const clearRenderedRows = () => {
       const width = Math.max(1, io.stdout.columns ?? 80);
-      const rows = occupiedRows(renderedLines, width);
+      const height = Math.max(1, io.stdout.rows ?? 24);
+      const rows = Math.min(height, occupiedRows(renderedLines, width));
       if (rows === 0) return;
-      io.stdout.write(`\x1b[${rows}A\r`);
-      for (let index = 0; index < rows; index++) io.stdout.write("\x1b[2K\n");
-      io.stdout.write(`\x1b[${rows}A\r`);
+      if (rows > 1) io.stdout.write(`\x1b[${rows - 1}A`);
+      io.stdout.write("\r");
+      for (let index = 0; index < rows; index++) {
+        io.stdout.write("\x1b[2K");
+        if (index < rows - 1) io.stdout.write("\x1b[1B\r");
+      }
+      if (rows > 1) io.stdout.write(`\x1b[${rows - 1}A`);
+      io.stdout.write("\r");
       renderedLines = [];
     };
     const cleanup = () => {
@@ -152,14 +158,10 @@ export function createCliProfileChooser(input: CliProfileChooserInput): Promise<
         theme,
         widthTools,
       });
-      const oldRows = occupiedRows(renderedLines, width);
-      const newRows = occupiedRows(layout.lines, width);
-      if (oldRows > 0) io.stdout.write(`\x1b[${oldRows}A\r`);
-      for (const line of layout.lines) io.stdout.write(`\x1b[2K${line}\n`);
-      if (oldRows > newRows) {
-        const staleRows = oldRows - newRows;
-        for (let index = 0; index < staleRows; index++) io.stdout.write("\x1b[2K\n");
-        io.stdout.write(`\x1b[${staleRows}A`);
+      clearRenderedRows();
+      for (let index = 0; index < layout.lines.length; index++) {
+        io.stdout.write(`\x1b[2K${layout.lines[index]}`);
+        if (index < layout.lines.length - 1) io.stdout.write("\r\n");
       }
       renderedLines = [...layout.lines];
     };

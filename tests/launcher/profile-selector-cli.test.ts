@@ -60,25 +60,36 @@ function visibleOutput(output: FakeOutput): string {
 
 class ReflowingScreen {
   width: number;
-  private rows: string[][] = [[]];
+  height: number;
+  private rows: string[][];
   private row = 0;
   private column = 0;
 
-  constructor(width: number) { this.width = width; }
+  constructor(width: number, height: number) {
+    this.width = width;
+    this.height = height;
+    this.rows = Array.from({ length: height }, () => []);
+  }
 
-  resize(width: number) {
-    const logicalRows = this.rows.slice(0, this.row).map(cells => cells.join("").replace(/ +$/g, ""));
+  resize(width: number, height: number) {
+    const logicalRows = this.rows.slice(0, this.row + 1).map(cells => cells.join("").replace(/ +$/g, ""));
     const reflowed = logicalRows.flatMap(line => {
       if (!line) return [""];
       const chunks: string[] = [];
       for (let offset = 0; offset < line.length; offset += width) chunks.push(line.slice(offset, offset + width));
       return chunks;
     });
+    const visible = reflowed.slice(-height);
     this.width = width;
-    this.rows = reflowed.map(line => [...line]);
-    this.rows.push([]);
-    this.row = reflowed.length;
-    this.column = 0;
+    this.height = height;
+    this.rows = Array.from({ length: height }, (_unused, index) => [...(visible[index] ?? "")]);
+    this.row = Math.max(0, visible.length - 1);
+    this.column = this.rows[this.row].length;
+  }
+
+  private lineFeed() {
+    if (this.row === this.height - 1) this.rows.push([]), this.rows.shift();
+    else this.row++;
   }
 
   write(input: string) {
@@ -88,6 +99,7 @@ class ReflowingScreen {
         if (match) {
           const count = Number(match[1] || "1");
           if (match[2] === "A") this.row = Math.max(0, this.row - count);
+          else if (match[2] === "B") this.row = Math.min(this.height - 1, this.row + count);
           else if (match[2] === "K") this.rows[this.row] = [];
           offset += match[0].length;
           continue;
@@ -95,15 +107,16 @@ class ReflowingScreen {
       }
       const character = input[offset++];
       if (character === "\r") { this.column = 0; continue; }
-      if (character === "\n") { this.row++; this.column = 0; this.rows[this.row] ??= []; continue; }
-      if (this.column >= this.width) { this.row++; this.column = 0; this.rows[this.row] ??= []; }
-      const cells = this.rows[this.row] ??= [];
+      if (character === "\n") { this.lineFeed(); this.column = 0; continue; }
+      if (this.column >= this.width) { this.lineFeed(); this.column = 0; }
+      const cells = this.rows[this.row];
       while (cells.length < this.column) cells.push(" ");
       cells[this.column++] = character;
     }
   }
 
-  text(): string { return this.rows.map(cells => cells.join("")).join("\n"); }
+  lines(): string[] { return this.rows.map(cells => cells.join("")); }
+  text(): string { return this.lines().join("\n"); }
 }
 
 async function settleAfter(ms: number) {
@@ -153,16 +166,19 @@ test("resize_shrink_clears_old_rows_and_preserves_id", async () => {
   const a = await api(), h = harness();
   const choice = a.createCliProfileChooser({ items, env: h.env, widthTools, io: h.io });
   h.stdin.emit("data", Buffer.from("\x1b[B"));
-  const screen = new ReflowingScreen(80);
+  const screen = new ReflowingScreen(80, 24);
   for (const write of h.stdout.writes) screen.write(write);
   const before = h.stdout.writes.length;
   h.stdout.columns = 24;
   h.stdout.rows = 6;
-  screen.resize(24);
+  screen.resize(24, 6);
   h.stdout.emit("resize");
   for (const write of h.stdout.writes.slice(before)) screen.write(write);
   assert.doesNotMatch(screen.text(), /pi-profile|Packages:/);
-  assert.match(screen.text(), /● Development/);
+  assert.deepEqual(screen.lines().slice(0, 3), ["│    Research", "│  ● Development", "│    Other"]);
+  assert.match(screen.text(), /Enter 開始/);
+  assert.match(screen.text(), /Esc Other/);
+  assert.match(screen.text().replace(/\n/g, ""), /Ctrl-\s*C 中止/);
   h.stdin.emit("data", Buffer.from("\r"));
   assert.deepEqual(await choice, { kind: "selected", id: "developer" });
 });
