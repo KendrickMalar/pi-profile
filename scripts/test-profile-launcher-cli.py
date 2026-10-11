@@ -21,38 +21,49 @@ class Launcher(base.Acceptance):
   c.send("\x1b[B"*index+"\r")
   c.wait(lambda:"profile:"+["Research","Specification","Development","Chore（雑務）","Other"][index] in c.text())
  def test_guided_focus_layout(self):
-  catalog=self.install_many_profiles()
+  self.install_many_profiles()
   for rows,columns in ((24,80),(16,40),(12,24)):
    with self.subTest(rows=rows,columns=columns):
     c=self.child(rows=rows,columns=columns)
     c.wait(lambda:"候補01" in c.screen_text() and "└" in c.screen_text())
-    self.assertEqual(self.requests,[]);self.assert_screen_fits(c,rows,columns)
+    self.assertEqual(self.requests,[])
     screen=c.screen_text();self.assertIn("● 候補01",screen)
     if columns==80:
      self.assertIn(base.GUIDED_TITLE,screen);self.assertIn("Packages:",screen)
      first_row=next(index for index,line in enumerate(c.screen.lines()) if "説明 01" in line)
-     c.send("\x1b[B");c.wait(lambda:"説明 02" in c.screen_text())
+     c.screen.reset_activity();c.send("\x1b[B");c.wait(lambda:"説明 02" in c.screen_text() and "Other" in c.screen_text())
      second_row=next(index for index,line in enumerate(c.screen.lines()) if "説明 02" in line)
      self.assertEqual(first_row,second_row)
+     self.assert_selector_frame(c,["候補01","候補02","候補03","候補04","候補05","同じ候補","同じ候補","候補08","候補09","候補10","候補11","Other"],"候補02")
+     self.assert_no_terminal_overflow(c)
     if columns<40:self.assertFalse(any(icon in screen for icon in ("🧭","📐","💻","🧹")))
     if columns==40:
-     c.send("\x1b[B"*6);c.wait(lambda:"● 同じ候補" in c.screen_text())
+     c.screen.reset_activity();c.send("\x1b[B"*6);c.wait(lambda:"● 同じ候補" in c.screen_text() and "候補01" in c.screen_text() and "Other" in c.screen_text())
+     self.assert_selector_frame(c,["候補01","候補02","候補03","候補04","候補05","同じ候補","同じ候補","候補08","候補09","候補10","候補11","Other"],"同じ候補")
+     self.assert_no_terminal_overflow(c)
     if columns==24:
-     c.send("\x1b[B"*10);c.wait(lambda:"11/12" in c.screen_text() and "● 候補11" in c.screen_text())
-    self.assert_screen_fits(c,rows,columns);self.save_screen(f"{columns}x{rows}",c);c.close()
+     c.screen.reset_activity();c.send("\x1b[B"*10);c.wait(lambda:"11/12" in c.screen_text() and "● 候補11" in c.screen_text() and "Other" in c.screen_text())
+     self.assert_selector_frame(c,["候補04","候補05","同じ候補","同じ候補","候補08","候補09","候補10","候補11","Other"],"候補11")
+     self.assert_no_terminal_overflow(c)
+    self.save_screen(f"{columns}x{rows}",c);c.close()
 
  def test_guided_focus_resize(self):
   c=self.child(rows=24,columns=80);c.wait(lambda:base.GUIDED_TITLE in c.screen_text())
   c.send("\x1b[B\x1b[B");c.wait(lambda:"● Development" in c.screen_text())
-  c.resize(16,40);c.wait(lambda:"● Development 💻" in c.screen_text() and "└" in c.screen_text())
-  self.assert_screen_fits(c,16,40);self.save_screen("40x16",c)
-  c.resize(12,24);c.wait(lambda:"● Development" in c.screen_text() and base.GUIDED_TITLE not in c.screen_text() and "└" in c.screen_text())
+  wide_sentinel=base.GUIDED_TITLE;self.assertIn(wide_sentinel,c.screen_text())
+  c.screen.reset_activity();c.resize(16,40);c.wait(lambda:"● Development 💻" in c.screen_text() and "└" in c.screen_text())
+  self.assert_selector_frame(c,["Research","Specification","Development","Chore（雑務）","Other"],"Development")
+  self.assert_no_terminal_overflow(c);self.save_screen("40x16",c)
+  c.screen.reset_activity();c.resize(12,24);c.wait(lambda:"● Development" in c.screen_text() and base.GUIDED_TITLE not in c.screen_text() and "└" in c.screen_text())
   narrow=c.screen_text();self.assertNotIn("Research      🧭",narrow)
   self.assertFalse(any(icon in narrow for icon in ("🧭","📐","💻","🧹")))
   self.assertIn("Enter",narrow);self.assertIn("Other",narrow)
-  self.assert_screen_fits(c,12,24);self.save_screen("24x12",c)
-  c.resize(24,80);c.wait(lambda:base.GUIDED_TITLE in c.screen_text() and "● Development" in c.screen_text() and "└" in c.screen_text())
-  self.assert_screen_fits(c,24,80);self.save_screen("80x24-restored",c)
+  self.assertNotIn(wide_sentinel,narrow)
+  self.assert_selector_frame(c,["Research","Specification","Development","Chore（雑務）","Other"],"Development")
+  self.assert_no_terminal_overflow(c);self.save_screen("24x12",c)
+  c.screen.reset_activity();c.resize(24,80);c.wait(lambda:base.GUIDED_TITLE in c.screen_text() and "● Development" in c.screen_text() and "└" in c.screen_text())
+  self.assert_selector_frame(c,["Research","Specification","Development","Chore（雑務）","Other"],"Development")
+  self.assert_no_terminal_overflow(c);self.save_screen("80x24-restored",c)
   c.send("\r");c.wait(lambda:"profile:Development" in c.text())
   self.assertEqual(len(self.requests),0)
 
@@ -119,11 +130,14 @@ class Launcher(base.Acceptance):
   self.assert_no_selector_output(c.text(mark))
  def test_shutdown_late_input(self):
   import signal
-  c=self.child();c.wait(lambda:base.GUIDED_TITLE in c.screen_text());before=len(self.requests)
-  os.killpg(c.p.pid,signal.SIGTERM)
+  c=self.child();c.wait(lambda:base.GUIDED_TITLE in c.screen_text() and "└" in c.screen_text());before=len(self.requests);mark=len(c.data)
+  os.killpg(c.p.pid,signal.SIGTERM);c.wait(lambda:c.p.poll() is not None)
+  exited=len(c.data)
   try:os.write(c.master,b"\r")
   except OSError:pass
-  c.wait(lambda:c.p.poll() is not None)
+  c.pump(.1)
+  self.assertEqual(len(c.data),exited,"output appeared after the observed process-exit boundary")
+  self.assertNotIn("◇ Profile",c.text(mark));self.assertNotIn("profile:",c.text(mark))
   self.assertEqual(len(self.requests),before);self.assertFalse(list((self.agent/"sessions").rglob("*.jsonl")))
 
  def test_fork_and_no_session(self):

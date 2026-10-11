@@ -160,6 +160,14 @@ test("ctrl_c_returns_cancel_without_selection_line", async () => {
   assert.deepEqual(h.stdin.rawCalls, [true, false]);
   assert.equal(h.stdin.listenerCount("data"), 0);
   assert.equal(h.stdout.listenerCount("resize"), 0);
+  const writes = h.stdout.writes.length;
+  h.stdin.emit("data", Buffer.from("\r"));
+  h.stdout.emit("resize");
+  await settleAfter(10);
+  assert.equal(h.stdout.writes.length, writes);
+  assert.doesNotMatch(visibleOutput(h.stdout), /◇ Profile/);
+  assert.equal(h.stdin.listenerCount("data"), 0);
+  assert.equal(h.stdout.listenerCount("resize"), 0);
 });
 
 test("resize_shrink_clears_old_rows_and_preserves_id", async () => {

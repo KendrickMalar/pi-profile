@@ -44,6 +44,7 @@ class TerminalScreen:
         self.rows = max(1, rows); self.columns = max(1, columns)
         self.cells = [[" "] * self.columns for _ in range(self.rows)]
         self.row = 0; self.column = 0; self.mode = "text"; self.sequence = ""
+        self.auto_wraps = 0; self.scrolls = 0
 
     def resize(self, rows, columns):
         rows=max(1,rows);columns=max(1,columns)
@@ -84,6 +85,7 @@ class TerminalScreen:
 
     def _linefeed(self):
         if self.row == self.rows - 1:
+            self.scrolls += 1
             self.cells.pop(0);self.cells.append([" "]*self.columns)
         else:self.row += 1
 
@@ -92,8 +94,10 @@ class TerminalScreen:
         if width == 0:
             if self.column > 0:self.cells[self.row][self.column-1] += char
             return
-        if self.column >= self.columns:self.column=0;self._linefeed()
-        if width == 2 and self.column == self.columns-1:self.column=0;self._linefeed()
+        if self.column >= self.columns:
+            self.auto_wraps += 1;self.column=0;self._linefeed()
+        if width == 2 and self.column == self.columns-1:
+            self.auto_wraps += 1;self.column=0;self._linefeed()
         self.cells[self.row][self.column]=char
         if width == 2 and self.column+1 < self.columns:self.cells[self.row][self.column+1]=""
         self.column += width
@@ -131,6 +135,12 @@ class TerminalScreen:
             if mode == 0:self.cells[self.row][self.column:]=[" "]*(self.columns-self.column)
             elif mode == 1:self.cells[self.row][:self.column+1]=[" "]*(self.column+1)
             elif mode == 2:self.cells[self.row]=[" "]*self.columns
+
+    def reset_activity(self):
+        self.auto_wraps=0;self.scrolls=0
+
+    def activity(self):
+        return {"auto_wraps":self.auto_wraps,"scrolls":self.scrolls}
 
     def lines(self):
         return ["".join(row).rstrip() for row in self.cells]
@@ -284,10 +294,7 @@ class Acceptance(unittest.TestCase):
             (ARTIFACTS/f"{name}-{i}.screen.txt").write_text(c.screen_text())
         (ARTIFACTS/f"{name}-requests.json").write_text(json.dumps(self.requests,ensure_ascii=False,indent=2))
         for n,data in self.unchanged.items():
-            if n == "settings.json":
-                self.assertEqual(json.loads((self.agent/n).read_text()), json.loads(data), n+" mutated")
-            else:
-                self.assertEqual((self.agent/n).read_bytes(),data,n+" mutated")
+            self.assertEqual((self.agent/n).read_bytes(),data,n+" mutated")
         self.server.shutdown();self.server.server_close();self.thread.join()
         self.tmp.cleanup()
     def assert_no_selector_output(self, text):
@@ -310,10 +317,31 @@ class Acceptance(unittest.TestCase):
             catalog.append(item)
         (self.profiles/"catalog.json").write_text(json.dumps(catalog,ensure_ascii=False))
         return catalog
-    def assert_screen_fits(self, child, rows, columns):
-        lines=child.screen.lines()
-        self.assertEqual(len(lines),rows)
-        self.assertTrue(all(sum(cell_width(char) for char in line)<=columns for line in lines),child.screen_text())
+    def selector_options(self, child):
+        options=[]
+        for row,line in enumerate(child.screen.lines()):
+            match=re.match(r"^│  (● |  )(.+)$",line)
+            if not match:continue
+            label=re.sub(r" (?:🧭|📐|💻|🧹)$","",match.group(2)).rstrip()
+            options.append((row,match.group(1)=="● ",label))
+        return options
+    def assert_selector_frame(self, child, expected_labels, selected_label):
+        options=self.selector_options(child)
+        self.assertEqual([label for _row,_selected,label in options],expected_labels,child.screen_text())
+        self.assertEqual([label for _row,selected,label in options if selected],[selected_label])
+        rows=[row for row,_selected,_label in options]
+        self.assertEqual(rows,list(range(rows[0],rows[0]+len(rows))),child.screen_text())
+        footer=next(index for index,line in enumerate(child.screen.lines()) if line.startswith("└  "))
+        self.assertGreater(footer,rows[-1])
+    def assert_no_terminal_overflow(self, child):
+        self.assertEqual(child.screen.activity(),{"auto_wraps":0,"scrolls":0},child.screen_text())
+    def sgr_before_text(self, child, text):
+        encoded=text.encode()
+        end=child.data.rfind(encoded)
+        self.assertGreaterEqual(end,0,text)
+        start=child.data.rfind(b"\x1b[2K",0,end)
+        self.assertGreaterEqual(start,0,text)
+        return set(re.findall(rb"\x1b\[[0-9;]*m",child.data[start:end]))
     def args(self,*extra):
         args=[OPTIONS.pi,"--offline","--no-extensions","--no-skills","--no-prompt-templates",
               "--model","profile-fixture/fixture"]
@@ -597,23 +625,26 @@ class Acceptance(unittest.TestCase):
                 c=self.child(rows=rows,columns=columns)
                 c.wait(lambda:"候補01" in c.screen_text() and "└" in c.screen_text())
                 self.assertEqual(self.requests,[])
-                self.assert_screen_fits(c,rows,columns)
                 screen=c.screen_text()
                 self.assertIn("● 候補01",screen)
                 if columns == 80:
                     first_row=next(index for index,line in enumerate(c.screen.lines()) if "説明 01" in line)
-                    c.send("\x1b[B");c.wait(lambda:"説明 02" in c.screen_text())
+                    c.screen.reset_activity();c.send("\x1b[B");c.wait(lambda:"説明 02" in c.screen_text())
                     second_row=next(index for index,line in enumerate(c.screen.lines()) if "説明 02" in line)
                     self.assertEqual(first_row,second_row)
+                    self.assert_selector_frame(c,["候補01","候補02","候補03","候補04","候補05","同じ候補","同じ候補","候補08","候補09","候補10","候補11","Other"],"候補02")
+                    self.assert_no_terminal_overflow(c)
                 if columns < 40:self.assertFalse(any(icon in screen for icon in ("🧭","📐","💻","🧹")))
                 if columns == 40:
-                    c.send("\x1b[B"*6)
-                    c.wait(lambda:"● 同じ候補" in c.screen_text())
-                    self.assert_screen_fits(c,rows,columns)
+                    c.screen.reset_activity();c.send("\x1b[B"*6)
+                    c.wait(lambda:"● 同じ候補" in c.screen_text() and "候補02" in c.screen_text() and "Other" in c.screen_text())
+                    self.assert_selector_frame(c,["候補02","候補03","候補04","候補05","同じ候補","同じ候補","候補08","候補09","候補10","候補11","Other"],"同じ候補")
+                    self.assert_no_terminal_overflow(c)
                 if columns == 24:
-                    c.send("\x1b[B"*10)
-                    c.wait(lambda:"11/12" in c.screen_text() and "● 候補11" in c.screen_text())
-                    self.assert_screen_fits(c,rows,columns)
+                    c.screen.reset_activity();c.send("\x1b[B"*10)
+                    c.wait(lambda:"11/12" in c.screen_text() and "● 候補11" in c.screen_text() and "Other" in c.screen_text())
+                    self.assert_selector_frame(c,["同じ候補","候補08","候補09","候補10","候補11","Other"],"候補11")
+                    self.assert_no_terminal_overflow(c)
                 self.save_screen(f"{columns}x{rows}",c)
                 c.close()
 
@@ -622,32 +653,50 @@ class Acceptance(unittest.TestCase):
         c.wait(lambda:GUIDED_TITLE in c.screen_text() and "└" in c.screen_text())
         c.send("\x1b[B\x1b[B")
         c.wait(lambda:"● Development" in c.screen_text())
-        c.resize(16,40)
+        wide_sentinel=GUIDED_TITLE
+        self.assertIn(wide_sentinel,c.screen_text())
+        c.screen.reset_activity();c.resize(16,40)
         c.wait(lambda:"● Development 💻" in c.screen_text() and "└" in c.screen_text())
-        self.assert_screen_fits(c,16,40);self.save_screen("40x16",c)
-        c.resize(12,24)
+        self.assert_selector_frame(c,["Research","Specification","Development","Chore（雑務）","Other"],"Development")
+        self.assert_no_terminal_overflow(c);self.save_screen("40x16",c)
+        c.screen.reset_activity();c.resize(12,24)
         c.wait(lambda:"● Development" in c.screen_text() and GUIDED_TITLE not in c.screen_text() and "└" in c.screen_text())
         narrow=c.screen_text()
         self.assertNotIn("Research      🧭",narrow)
         self.assertFalse(any(icon in narrow for icon in ("🧭","📐","💻","🧹")))
         self.assertIn("Enter",narrow);self.assertIn("Other",narrow)
-        self.assert_screen_fits(c,12,24);self.save_screen("24x12",c)
-        c.resize(24,80)
+        self.assertNotIn(wide_sentinel,narrow)
+        self.assert_selector_frame(c,["Research","Specification","Development","Chore（雑務）","Other"],"Development")
+        self.assert_no_terminal_overflow(c);self.save_screen("24x12",c)
+        c.screen.reset_activity();c.resize(24,80)
         c.wait(lambda:GUIDED_TITLE in c.screen_text() and "● Development" in c.screen_text() and "└" in c.screen_text())
-        self.assert_screen_fits(c,24,80);self.save_screen("80x24-restored",c)
+        self.assert_selector_frame(c,["Research","Specification","Development","Chore（雑務）","Other"],"Development")
+        self.assert_no_terminal_overflow(c);self.save_screen("80x24-restored",c)
         c.send("\r");c.wait(lambda:"profile:Development" in c.text())
 
     def test_guided_focus_keybindings_icons_and_themes(self):
         (self.agent/"keybindings.json").write_text(json.dumps({
             "tui.select.up":"ctrl+p","tui.select.down":"ctrl+n",
             "tui.select.confirm":"ctrl+y","tui.select.cancel":"ctrl+g"}))
+        expected={
+            "dark":{"accent":b"\x1b[38;5;140m","muted":b"\x1b[38;5;145m","dim":b"\x1b[38;5;102m"},
+            "light":{"accent":b"\x1b[38;5;97m","muted":b"\x1b[38;5;60m","dim":b"\x1b[38;5;102m"},
+        }
+        accents={}
         for theme in ("dark","light"):
             with self.subTest(theme=theme):
                 c=self.child("--use-theme",theme,rows=24,columns=80)
                 c.wait(lambda:"Ctrl+P/Ctrl+N 選択" in c.screen_text())
-                self.assertIn(b"\x1b[",c.data)
+                selected=self.sgr_before_text(c,"● Research")
+                description=self.sgr_before_text(c,"情報を調べ、出典付きの資料・表にまとめる")
+                footer=self.sgr_before_text(c,"Ctrl+P/Ctrl+N 選択")
+                self.assertIn(expected[theme]["accent"],selected);self.assertIn(b"\x1b[1m",selected)
+                self.assertIn(expected[theme]["muted"],description)
+                self.assertIn(expected[theme]["dim"],footer)
+                accents[theme]=expected[theme]["accent"]
                 self.save_screen(theme,c)
                 c.send("\x07");c.wait(lambda:"profile:Other" in c.text());c.close()
+        self.assertNotEqual(accents["dark"],accents["light"])
         self.env["PI_PROFILE_ICONS"]="0"
         c=self.child(rows=24,columns=80);c.wait(lambda:GUIDED_TITLE in c.screen_text() and "└" in c.screen_text())
         self.assertFalse(any(icon in c.screen_text() for icon in ("🧭","📐","💻","🧹")))
@@ -658,12 +707,13 @@ class Acceptance(unittest.TestCase):
     def test_shutdown_during_selection(self):
         c=self.child(); c.wait(lambda:GUIDED_TITLE in c.screen_text() and "└" in c.screen_text())
         mark=len(c.data);os.killpg(c.p.pid,signal.SIGTERM)
-        c.wait(lambda:c.p.poll() is not None or GUIDED_TITLE not in c.screen_text())
-        if c.p.poll() is None:
-            try:os.write(c.master,b"\r")
-            except OSError:pass
         c.wait(lambda:c.p.poll() is not None)
-        self.assertNotIn("profile:",c.text(mark))
+        exited=len(c.data)
+        try:os.write(c.master,b"\r")
+        except OSError:pass
+        c.pump(.1)
+        self.assertEqual(len(c.data),exited,"output appeared after the observed process-exit boundary")
+        self.assertNotIn("profile:",c.text(mark));self.assertNotIn("◇ Profile",c.text(mark))
         self.assertEqual(self.requests,[])
         self.assertFalse(list((self.agent/"sessions").rglob("*.jsonl")))
 
@@ -818,8 +868,10 @@ class Acceptance(unittest.TestCase):
         self.run_mode('--fork',str(path),'--print','fork separated fixture')
         self.assertIn('UPDATED_HOME_SKILL',json.dumps(self.requests[-1]))
         metadata=self.profiles/'research/profile.json';data=json.loads(metadata.read_text());data['enabled']=False;metadata.write_text(json.dumps(data))
-        c=self.child();c.wait(lambda:GUIDED_TITLE in c.text())
-        self.assertNotIn('[research] Research',c.text())
+        c=self.child();c.wait(lambda:GUIDED_TITLE in c.screen_text() and "└" in c.screen_text())
+        options=self.selector_options(c)
+        self.assertNotIn("Research",[label for _row,_selected,label in options])
+        self.assertIn("Specification",[label for _row,_selected,label in options])
         c.send('\x1b');c.wait(lambda:'profile:Other' in c.text())
         system=json.dumps([m for m in self.prompt(c,'removed personal')['messages'] if m['role']=='system'])
         self.assertNotIn('UPDATED_HOME_SKILL',system)
