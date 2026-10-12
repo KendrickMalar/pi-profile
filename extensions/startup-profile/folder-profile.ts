@@ -2,9 +2,15 @@ import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'n
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type { ProfileDefinition } from './catalog.ts';
 export interface FolderProfile extends ProfileDefinition { directory: string; order: number; enabled: boolean }
+function inside(base:string, target:string):boolean {
+ const rel=relative(base,target);
+ return !(rel==='..'||rel.startsWith('..'+sep)||isAbsolute(rel));
+}
+// Symlinks are trusted: profiles may link to files kept elsewhere (dotfiles, generated profiles).
+// Only paths that leave the root by name (`..`) without resolving back inside are rejected.
 export function containedPath(root:string, path:string):string {
- const base=realpathSync(root), target=realpathSync(path), rel=relative(base,target);
- if(rel==='..'||rel.startsWith('..'+sep)||isAbsolute(rel))throw new Error('path escapes profile root');
+ const target=realpathSync(path);
+ if(!inside(resolve(root),resolve(path))&&!inside(realpathSync(root),target))throw new Error('path escapes profile root');
  return target;
 }
 export function scanFolderProfiles(root:string):{profiles:FolderProfile[];blockedIds:string[];warnings:string[];unavailable?:boolean} {
