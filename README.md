@@ -99,7 +99,7 @@ Path-like `tools` entries (including `/` or a `.ts`/`.js` suffix) are rejected: 
 
 Profile instructions remain saved in the conversation. Additional resources are read from current files on resume/reload; missing or disabled profiles retain saved instructions without their additional resources. Changes to referenced scripts/files are not a fully immutable snapshot or sandbox.
 
-Legacy `catalog.json` definitions still work. The file is optional: folder-only profiles need no catalog, and its absence produces no warning. Invalid JSON, unreadable catalogs, and dangling catalog symlinks still produce warnings. Folder definitions take precedence over the same legacy ID, including disabled definitions. Other is always available as a safe fallback. External symlink/path escapes are rejected.
+Legacy `catalog.json` definitions still work. The file is optional: folder-only profiles need no catalog, and its absence produces no warning. Invalid JSON, unreadable catalogs, and dangling catalog symlinks still produce warnings. Folder definitions take precedence over the same legacy ID, including disabled definitions. Other is always available as a safe fallback. Symlinks are followed wherever they point (profiles may link to dotfiles or generated files); only `..` path escapes are rejected.
 
 Instructions apply only to new conversations. **Never put credentials or secrets in a profile:** the literal text is saved in the conversation and may be exposed in exports or shares. Profiles should not weaken common safety rules or project instructions.
 

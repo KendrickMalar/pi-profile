@@ -66,8 +66,9 @@ export function loadProfileResources(profile:ProfileDefinition,commonSkills:read
    const target=containedPath(root,path);
    if(seen.has(target))return; seen.add(target);
    if(!statSync(target).isDirectory())return;
-   if(existsSync(resolve(target,'SKILL.md'))){
-    const file=containedPath(root,resolve(target,'SKILL.md'));
+   // Children are checked by their path under the profile, so a symlinked folder may point anywhere.
+   if(existsSync(resolve(path,'SKILL.md'))){
+    const file=containedPath(root,resolve(path,'SKILL.md'));
     if(!statSync(file).isFile())throw new Error('SKILL.md must be a regular file');
     // Explicit file loading cannot fall through to SDK directory recursion.
     const result=loadSkills({cwd:root,agentDir:root,includeDefaults:false,skillPaths:[file]});
@@ -75,7 +76,7 @@ export function loadProfileResources(profile:ProfileDefinition,commonSkills:read
     for(const s of result.skills){if(candidates.has(s.name)){out.warnings.push('duplicate skill: '+s.name);continue;}candidates.set(s.name,s.filePath);out.skillPaths.push(s.filePath);}
     return;
    }
-   for(const e of readdirSync(target,{withFileTypes:true}))if(e.isDirectory()||e.isSymbolicLink())visit(resolve(target,e.name),seen);
+   for(const e of readdirSync(target,{withFileTypes:true}))if(e.isDirectory()||e.isSymbolicLink())visit(resolve(path,e.name),seen);
   }catch(error){out.warnings.push('profile skills: '+String(error));}
  };
  if(existsSync(resolve(root,'skills')))visit(resolve(root,'skills'),new Set());
