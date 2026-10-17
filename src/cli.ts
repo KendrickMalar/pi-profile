@@ -3,8 +3,8 @@ import {readFileSync,existsSync,realpathSync} from 'node:fs';import {homedir} fr
 import {loadPiHost,findPiExecutable,type PiHost} from './pi-host.ts';import {parseSessionIntent} from './session-intent.ts';import {resolveSessionTarget} from './session-target.ts';
 import {selectStartupProfile} from './select-profile.ts';import {chooseProfileInCli} from './profile-selector-cli.ts';import {resolveProfileRoot} from '../extensions/startup-profile/profile-root.ts';import {loadProfiles,STANDARD_PROFILE,type ProfileDefinition} from '../extensions/startup-profile/catalog.ts';
 import {loadProfilePackages,changeProfilePackages,normalizeSource} from './package-declarations.ts';import {resolveProfilePackages,manageProfilePackages} from './package-resolver.ts';import {launchPi,spawnNativePi,startupExtension} from './launch.ts';
-import {acquireProfilePackages} from './package-worker-client.ts';
-const help='pi-profile launch [--profile ID] -- [Pi args...]\npi-profile packages <list|add|remove|install|update> --profile ID [SOURCE] [--replace]\n';
+import {acquireProfilePackages} from './package-worker-client.ts';import {runSpawn,realHerdr} from './spawn.ts';
+const help='pi-profile launch [--profile ID] -- [Pi args...]\npi-profile packages <list|add|remove|install|update> --profile ID [SOURCE] [--replace]\npi-profile spawn --pane ID [--name NAME] [-- Pi args...]\n';
 function ownOptions(args:string[]):{profile?:string;replace:boolean;source?:string}{
  let profile:string|undefined,replace=false,source:string|undefined;
  for(let i=0;i<args.length;i++){const v=args[i];if(v==='--profile'){profile=args[++i];if(!profile)throw new Error('--profileの値がありません');}
@@ -68,6 +68,12 @@ export async function runCli(argv:string[],env:NodeJS.ProcessEnv):Promise<number
   let root=dirname(startupExtension);while(!existsSync(join(root,'package.json'))||JSON.parse(readFileSync(join(root,'package.json'),'utf8')).name!=='pi-profile'){const up=dirname(root);if(up===root)throw new Error('pi-profile package rootが不明です');root=up;}
   sameRegistration(host,root,agentDir,args);
   return launchPi({host,target,profile:selected,packages:resolved,env,profileRoot:p.root});
+ }
+ if(command==='spawn'){
+  const sep=argv.indexOf('--'),own=sep<0?argv.slice(1):argv.slice(1,sep),args=sep<0?[]:argv.slice(sep+1);let pane:string|undefined,name:string|undefined;
+  for(let i=0;i<own.length;i++){if(own[i]==='--pane'){pane=own[++i];if(!pane)throw new Error('--paneの値がありません');}else if(own[i]==='--name'){name=own[++i];if(!name)throw new Error('--nameの値がありません');}else throw new Error('spawn引数が不正です。Pi引数は--の後へ指定してください');}
+  if(!pane)throw new Error('--paneを指定してください');
+  return runSpawn({pane,name,args,env,home,herdr:realHerdr});
  }
  if(command==='packages'){
   const action=argv[1],options=ownOptions(argv.slice(2));if(!options.profile)throw new Error('--profileを指定してください');
