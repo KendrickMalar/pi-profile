@@ -22,9 +22,19 @@ export function findPiExecutable(input='pi'):string{
  const candidates=input.includes('/')?[resolve(input)]:(process.env.PATH??'').split(delimiter).map(p=>join(p,input));
  const found=candidates.find(p=>existsSync(p)&&statSync(p).isFile());if(!found)throw new Error('Pi実行ファイルが見つかりません');return realpathSync(found);
 }
+function findPiPackage(file:string):{root:string;manifest:any}|undefined{
+ let root=dirname(file);
+ for(;;){const p=join(root,'package.json');if(existsSync(p)){try{const m=JSON.parse(readFileSync(p,'utf8'));if(m.name==='@earendil-works/pi-coding-agent')return{root,manifest:m};}catch{}}const up=dirname(root);if(up===root)return undefined;root=up;}
+}
+// PATHの先頭にshim（~/.local/bin/pi）があっても飛ばし、実体がPiのnpmパッケージ内にある最初のpiを採る。
+export function findRealPiOnPath(path:string|undefined):string{
+ for(const dir of (path??'').split(delimiter)){if(!dir)continue;const p=join(dir,'pi');
+  try{if(!existsSync(p)||!statSync(p).isFile())continue;const real=realpathSync(p);if(findPiPackage(real))return real;}catch{}}
+ throw new Error('Pi実行ファイルが見つかりません（PATH上にnpm配置のPiがありません。PI_PROFILE_PI_BINで指定できます）');
+}
+export function piBinFromEnv(env:NodeJS.ProcessEnv):string{return env.PI_PROFILE_PI_BIN??findRealPiOnPath(env.PATH);}
 export async function loadPiHost(executable:string):Promise<PiHost>{
- const file=findPiExecutable(executable);let root=dirname(file),manifest:any;
- for(;;){const p=join(root,'package.json');if(existsSync(p)){const m=JSON.parse(readFileSync(p,'utf8'));if(m.name==='@earendil-works/pi-coding-agent'){manifest=m;break;}}const up=dirname(root);if(up===root)throw new Error('npm配置のPiを指定してください');root=up;}
+ const file=findPiExecutable(executable),found=findPiPackage(file);if(!found)throw new Error('npm配置のPiを指定してください');const {root,manifest}=found;
  if(!isSupportedPiVersion(manifest.version))throw new Error(`新ランチャーはPi ${MIN_PI_VERSION}以上・2.0未満に対応しています（検出: ${manifest.version}）`);
  const entry=manifest.exports?.['.']?.import;if(typeof entry!=='string')throw new Error('Piの公開SDK入口がありません');
  const sdkPath=realpathSync(resolve(root,entry)),rel=relative(root,sdkPath);if(rel.startsWith('..')||isAbsolute(rel))throw new Error('Pi SDK入口がpackage rootから逸脱しています');

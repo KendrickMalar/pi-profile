@@ -12,6 +12,7 @@ import { registerProfileAgents } from './subagent-registration.ts';
 import {readLaunchContext} from '../../src/launch-context.ts';
 import {attachLaunchBridge} from './launch-bridge.ts';
 import {chooseProfileInPi} from './selector-ui.ts';
+import {loadProfilePackages} from '../../src/package-declarations.ts';
 
 export default function startupProfile(pi: ExtensionAPI, profilesRoot?: string): void {
  const contextFile=process.env.PI_SUBAGENT_CHILD==='1'?undefined:process.env.PI_PROFILE_LAUNCH_CONTEXT;
@@ -31,6 +32,7 @@ export default function startupProfile(pi: ExtensionAPI, profilesRoot?: string):
   generation++;controller?.abort();controller=undefined;
   active=snapshotProfile(STANDARD_PROFILE);
   hasStoredProfile=false;
+  delete process.env.PI_PROFILE_ACTIVE;
  });
  pi.on("session_start",async(event,ctx)=>{
   release();
@@ -77,6 +79,13 @@ export default function startupProfile(pi: ExtensionAPI, profilesRoot?: string):
   if(!restored.invalid){
    selectedDefinition=profiles.find(p=>p.id===active.id);
    if(!selectedDefinition&&active.id!=='standard')ctx.ui.notify('Profileの追加リソースを読み込めません: '+active.id,'warning');
+  }
+  process.env.PI_PROFILE_ACTIVE=active.id;
+  if(!bridge&&selectedDefinition?.directory){
+   try{
+    const sources=loadProfilePackages(selectedDefinition.directory).packages;
+    if(sources.length)ctx.ui.notify('Profile「'+active.label+'」のパッケージ（'+sources.join(',')+'）は読み込まれていません。pi を一度終了し、pi --session <会話ファイル> で開き直してください。','warning');
+   }catch{ctx.ui.notify('パッケージ宣言を確認してください','warning');}
   }
   ctx.ui.setStatus("startup-profile","profile:"+active.label);
  });
