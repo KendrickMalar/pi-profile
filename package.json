@@ -17,6 +17,7 @@
     "dist/",
     "src/",
     "extensions/startup-profile/",
+    "extensions/child-launch-guard/",
     "docs/*.md",
     "README.md",
     "LICENSE"
@@ -26,7 +27,8 @@
   },
   "pi": {
     "extensions": [
-      "./extensions/startup-profile/index.ts"
+      "./extensions/startup-profile/index.ts",
+      "./extensions/child-launch-guard/index.ts"
     ]
   },
   "scripts": {

@@ -10,10 +10,10 @@ test("the distributable manifest exposes one existing extension with its catalog
   assert.ok(existsSync(path), "standalone package manifest must exist");
   const manifest = JSON.parse(readFileSync(path, "utf8"));
   assert.equal(manifest.name, "pi-profile");
-  assert.deepEqual(manifest.pi.extensions, ["./extensions/startup-profile/index.ts"]);
+  assert.deepEqual(manifest.pi.extensions, ["./extensions/startup-profile/index.ts","./extensions/child-launch-guard/index.ts"]);
   assert.equal(manifest.peerDependencies["@earendil-works/pi-coding-agent"], "*");
   assert.equal(manifest.dependencies?.["@earendil-works/pi-coding-agent"], undefined);
-  assert.ok(existsSync(new URL(manifest.pi.extensions[0], root)));
+  for(const e of manifest.pi.extensions)assert.ok(existsSync(new URL(e, root)));
   const directory=fileURLToPath(new URL('extensions/startup-profile/profiles/',root));
   const profiles=loadProfiles(directory).profiles;
   assert.deepEqual(profiles.map(p=>p.id),['research','specification','developer','chore','standard']);
