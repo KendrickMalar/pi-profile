@@ -84,7 +84,7 @@ export default function startupProfile(pi: ExtensionAPI, profilesRoot?: string):
   if(!bridge&&selectedDefinition?.directory){
    try{
     const sources=loadProfilePackages(selectedDefinition.directory).packages;
-    if(sources.length)ctx.ui.notify('Profile「'+active.label+'」のパッケージ（'+sources.join(',')+'）は読み込まれていません。pi を一度終了し、pi-profile launch --profile '+active.id+' -- --session <会話ファイル> で開き直してください。','warning');
+    if(sources.length)ctx.ui.notify('Profile「'+active.label+'」のパッケージ（'+sources.join(',')+'）は読み込まれていません。pi を一度終了し、pi --session <会話ファイル> で開き直してください。','warning');
    }catch{ctx.ui.notify('パッケージ宣言を確認してください','warning');}
   }
   ctx.ui.setStatus("startup-profile","profile:"+active.label);

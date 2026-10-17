@@ -294,7 +294,7 @@ test("warns when a package profile runs without the launcher", withEnvRestored(a
     await h.handlers.session_start({ reason: "startup" }, h.ctx);
     const found = warnings(h);
     assert.equal(found.length, 1);
-    assert.equal(found[0][0], `Profile「Development」のパッケージ（${PACKAGE_SOURCE}）は読み込まれていません。pi を一度終了し、pi-profile launch --profile developer -- --session <会話ファイル> で開き直してください。`);
+    assert.equal(found[0][0], `Profile「Development」のパッケージ（${PACKAGE_SOURCE}）は読み込まれていません。pi を一度終了し、pi --session <会話ファイル> で開き直してください。`);
     const restored = harness(undefined, [{ type: "custom", customType: "startup-profile-state", data: { version: 1, id: "developer", label: "Development", instructions: "X" } }], root);
     await restored.handlers.session_start({ reason: "resume" }, restored.ctx);
     assert.equal(warnings(restored).length, 1);

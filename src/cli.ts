@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import {readFileSync,existsSync,realpathSync} from 'node:fs';import {homedir} from 'node:os';import {dirname,join,resolve} from 'node:path';import {fileURLToPath,pathToFileURL} from 'node:url';
-import {loadPiHost,findPiExecutable,type PiHost} from './pi-host.ts';import {parseSessionIntent} from './session-intent.ts';import {resolveSessionTarget} from './session-target.ts';
+import {loadPiHost,findPiExecutable,piBinFromEnv,type PiHost} from './pi-host.ts';import {parseSessionIntent} from './session-intent.ts';import {resolveSessionTarget} from './session-target.ts';
 import {selectStartupProfile} from './select-profile.ts';import {chooseProfileInCli} from './profile-selector-cli.ts';import {resolveProfileRoot} from '../extensions/startup-profile/profile-root.ts';import {loadProfiles,STANDARD_PROFILE,type ProfileDefinition} from '../extensions/startup-profile/catalog.ts';
 import {loadProfilePackages,changeProfilePackages,normalizeSource} from './package-declarations.ts';import {resolveProfilePackages,manageProfilePackages} from './package-resolver.ts';import {launchPi,spawnNativePi,startupExtension} from './launch.ts';
 import {acquireProfilePackages} from './package-worker-client.ts';import {runSpawn,realHerdr} from './spawn.ts';
@@ -49,13 +49,13 @@ function sameRegistration(host:PiHost,root:string,agentDir:string,args:string[])
 }
 export async function runCli(argv:string[],env:NodeJS.ProcessEnv):Promise<number>{
  if(!argv.length||argv[0]==='--help'||argv[0]==='-h'){process.stdout.write(help);return 0;}
- const command=argv[0],home=env.HOME??homedir(),bin=env.PI_PROFILE_PI_BIN??'pi';
+ const command=argv[0],home=env.HOME??homedir(),bin=()=>piBinFromEnv(env);
  if(command==='launch'){
   const sep=argv.indexOf('--'),options=ownOptions(sep<0?argv.slice(1):argv.slice(1,sep)),args=sep<0?[]:argv.slice(sep+1);
   if(options.source||options.replace)throw new Error('launch引数が不正です');
   const intent=parseSessionIntent(args,{stdin:Boolean(process.stdin.isTTY),stdout:Boolean(process.stdout.isTTY)});
-  if(intent.kind==='passthrough')return spawnNativePi(findPiExecutable(bin),args,env);
-  const host=await loadPiHost(bin),agentDir=env.PI_CODING_AGENT_DIR??join(home,'.pi/agent'),p=profiles(home,env);
+  if(intent.kind==='passthrough')return spawnNativePi(findPiExecutable(bin()),args,env);
+  const host=await loadPiHost(bin()),agentDir=env.PI_CODING_AGENT_DIR??join(home,'.pi/agent'),p=profiles(home,env);
   const target=await resolveSessionTarget(host,intent,process.cwd(),agentDir,async(items)=>{
    const result=await choose(items.map(i=>({id:i.id,label:i.title,description:i.profileId})),'再開する会話',host);return result.kind==='selected'?result.id:null;});
   const selected=await selectStartupProfile(target,p.definitions,options.profile,async(items)=>{
@@ -80,7 +80,7 @@ export async function runCli(argv:string[],env:NodeJS.ProcessEnv):Promise<number
   const p=profiles(home,env),definition=p.definitions.find(p=>p.id===options.profile);if(!definition?.directory)throw new Error('対象Profileフォルダがありません');
   if(action==='list'){process.stdout.write(JSON.stringify(loadProfilePackages(definition.directory),null,2)+'\n');return 0;}
   if(action==='add'||action==='remove'){if(!options.source)throw new Error('sourceを指定してください');await changeProfilePackages(definition.directory,action,options.source,options.replace);return 0;}
-  if(action==='install'||action==='update'){const host=await loadPiHost(bin);await acquireProfilePackages(host,definition.id,loadProfilePackages(definition.directory),home,env,action,options.source?normalizeSource(options.source,definition.directory):undefined,Boolean(process.stdin.isTTY&&process.stdout.isTTY));return 0;}
+  if(action==='install'||action==='update'){const host=await loadPiHost(bin());await acquireProfilePackages(host,definition.id,loadProfilePackages(definition.directory),home,env,action,options.source?normalizeSource(options.source,definition.directory):undefined,Boolean(process.stdin.isTTY&&process.stdout.isTTY));return 0;}
   throw new Error('packages操作が不明です');
  }
  throw new Error('操作が不明です。--helpを確認してください');
