@@ -2,6 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import extension from "../../extensions/startup-profile/index.ts";
 import { fileURLToPath } from "node:url";
+import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { writeLaunchContext } from "../../src/launch-context.ts";
 
 type CustomComponent = {
   render(width: number): string[];
@@ -10,7 +14,7 @@ type CustomComponent = {
   dispose?(): void;
 };
 
-function harness(choice: string | null | undefined = "[developer] Development — コード・設計・検証を中心に支援", restore: unknown[] = []) {
+function harness(choice: string | null | undefined = "[developer] Development — コード・設計・検証を中心に支援", restore: unknown[] = [], root?: string) {
   const handlers: Record<string, Function> = {};
   const entries: any[] = [...restore];
   const notices: any[] = [];
@@ -88,7 +92,7 @@ function harness(choice: string | null | undefined = "[developer] Development �
       setStatus: (...args: any[]) => statuses.push(args),
     },
   };
-  extension(pi, fileURLToPath(new URL("../../extensions/startup-profile/profiles/", import.meta.url)));
+  extension(pi, root ?? fileURLToPath(new URL("../../extensions/startup-profile/profiles/", import.meta.url)));
   return {
     handlers,
     entries,
@@ -250,3 +254,73 @@ test("tree does not invent a named profile for legacy or invalid sessions", asyn
     assert.equal(h.entries.length, 1);
   }
 });
+
+const PACKAGE_SOURCE = "npm:@papillon6814/pi-gh@0.8.0";
+
+function withEnvRestored(fn: () => Promise<void>) {
+  return async () => {
+    const saved = { active: process.env.PI_PROFILE_ACTIVE, ctx: process.env.PI_PROFILE_LAUNCH_CONTEXT };
+    delete process.env.PI_PROFILE_ACTIVE;
+    delete process.env.PI_PROFILE_LAUNCH_CONTEXT;
+    try { await fn(); } finally {
+      for (const [key, value] of [["PI_PROFILE_ACTIVE", saved.active], ["PI_PROFILE_LAUNCH_CONTEXT", saved.ctx]] as const) {
+        if (value === undefined) delete process.env[key]; else process.env[key] = value;
+      }
+    }
+  };
+}
+
+function profilesWithPackages(packages: string[] | undefined) {
+  const root = mkdtempSync(join(tmpdir(), "startup-profile-pk-"));
+  cpSync(fileURLToPath(new URL("../../extensions/startup-profile/profiles/", import.meta.url)), root, { recursive: true });
+  if (packages) writeFileSync(join(root, "development", "packages.json"), JSON.stringify({ version: 1, packages }));
+  return root;
+}
+
+const warnings = (h: { notices: any[] }) => h.notices.filter(n => n[1] === "warning" && String(n[0]).includes("読み込まれていません"));
+
+test("exports active profile id to PI_PROFILE_ACTIVE", withEnvRestored(async () => {
+  const h = harness();
+  await h.handlers.session_start({ reason: "startup" }, h.ctx);
+  assert.equal(process.env.PI_PROFILE_ACTIVE, "developer");
+  h.handlers.session_shutdown({}, h.ctx);
+  assert.equal(process.env.PI_PROFILE_ACTIVE, undefined);
+}));
+
+test("warns when a package profile runs without the launcher", withEnvRestored(async () => {
+  const root = profilesWithPackages([PACKAGE_SOURCE]);
+  try {
+    const h = harness(undefined, [], root);
+    await h.handlers.session_start({ reason: "startup" }, h.ctx);
+    const found = warnings(h);
+    assert.equal(found.length, 1);
+    assert.equal(found[0][0], `Profile「Development」のパッケージ（${PACKAGE_SOURCE}）は読み込まれていません。pi を一度終了し、pi-profile launch --profile developer -- --session <会話ファイル> で開き直してください。`);
+    const restored = harness(undefined, [{ type: "custom", customType: "startup-profile-state", data: { version: 1, id: "developer", label: "Development", instructions: "X" } }], root);
+    await restored.handlers.session_start({ reason: "resume" }, restored.ctx);
+    assert.equal(warnings(restored).length, 1);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}));
+
+test("does not warn under the launcher or for profiles without packages", withEnvRestored(async () => {
+  const bare = profilesWithPackages(undefined);
+  const root = profilesWithPackages([PACKAGE_SOURCE]);
+  try {
+    const h = harness(undefined, [], bare);
+    await h.handlers.session_start({ reason: "startup" }, h.ctx);
+    assert.equal(warnings(h).length, 0);
+    const launch = await writeLaunchContext({
+      version: 1,
+      profile: { version: 1, id: "developer", label: "Development", instructions: "X" },
+      packages: { profileId: "developer", sources: [], resourceRoots: [], extensions: [], skills: [], prompts: [], themes: [] },
+      target: { kind: "new", cwd: process.cwd() },
+      ownerPid: process.pid,
+      nonce: "00000000-0000-0000-0000-000000000000",
+    } as any, tmpdir());
+    try {
+      process.env.PI_PROFILE_LAUNCH_CONTEXT = launch.path;
+      const l = harness(undefined, [], root);
+      await l.handlers.session_start({ reason: "startup" }, l.ctx);
+      assert.equal(warnings(l).length, 0);
+    } finally { await launch.dispose(); }
+  } finally { rmSync(bare, { recursive: true, force: true }); rmSync(root, { recursive: true, force: true }); }
+}));
