@@ -3,7 +3,7 @@ import {readFileSync,existsSync,realpathSync} from 'node:fs';import {homedir} fr
 import {loadPiHost,findPiExecutable,piBinFromEnv,type PiHost} from './pi-host.ts';import {parseSessionIntent} from './session-intent.ts';import {resolveSessionTarget} from './session-target.ts';
 import {selectStartupProfile} from './select-profile.ts';import {chooseProfileInCli} from './profile-selector-cli.ts';import {resolveProfileRoot} from '../extensions/startup-profile/profile-root.ts';import {loadProfiles,STANDARD_PROFILE,type ProfileDefinition} from '../extensions/startup-profile/catalog.ts';
 import {loadProfilePackages,changeProfilePackages,normalizeSource} from './package-declarations.ts';import {resolveProfilePackages,manageProfilePackages} from './package-resolver.ts';import {launchPi,spawnNativePi,startupExtension} from './launch.ts';
-import {acquireProfilePackages} from './package-worker-client.ts';import {runSpawn,realHerdr} from './spawn.ts';
+import {acquireProfilePackages} from './package-worker-client.ts';import {runSpawn,realHerdr} from './spawn.ts';import {scaffoldHandoffArgs} from './scaffold-handoff.ts';
 const help='pi-profile launch [--profile ID] -- [Pi args...]\npi-profile packages <list|add|remove|install|update> --profile ID [SOURCE] [--replace]\npi-profile spawn --pane ID [--name NAME] [-- Pi args...]\n';
 function ownOptions(args:string[]):{profile?:string;replace:boolean;source?:string}{
  let profile:string|undefined,replace=false,source:string|undefined;
@@ -53,6 +53,8 @@ export async function runCli(argv:string[],env:NodeJS.ProcessEnv):Promise<number
  if(command==='launch'){
   const sep=argv.indexOf('--'),options=ownOptions(sep<0?argv.slice(1):argv.slice(1,sep)),args=sep<0?[]:argv.slice(sep+1);
   if(options.source||options.replace)throw new Error('launch引数が不正です');
+  const handoff=scaffoldHandoffArgs(args,env,options.profile);
+  if(handoff)return spawnNativePi('kec-orb-handoff',handoff,env);
   const intent=parseSessionIntent(args,{stdin:Boolean(process.stdin.isTTY),stdout:Boolean(process.stdout.isTTY)});
   if(intent.kind==='passthrough')return spawnNativePi(findPiExecutable(bin()),args,env);
   const host=await loadPiHost(bin()),agentDir=env.PI_CODING_AGENT_DIR??join(home,'.pi/agent'),p=profiles(home,env);
